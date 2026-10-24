@@ -6,6 +6,8 @@ Development tools for [NacreCraft](https://github.com/NacreCraftDev/NacreCraft) 
 |---|---|
 | `NacreCraft.ModBuild.Tools` | `ncm` — the mod development CLI, packaged as a dotnet tool |
 | `NacreCraft.ModsProjectType` | The `dotnet new ncm` project template |
+| `NacreCraft.NcMod.LangServer` | The C# and JavaScript language server used by the editor extension |
+| `VSCode/` | The `NacreCraft NcMod` VS Code extension |
 | `reference/` | Kernel reference assemblies handed to newly created projects |
 
 ## Install the toolchain
@@ -41,11 +43,12 @@ ncm add nuget <id> [version]    # declare a package dependency in the .ncproj
 ncm add file <path>             # declare a managed dll as a compile reference
 ncm add project <path>          # reference another project in the .ncproj
 ncm restore                     # resolve the declared packages into Build/packages/
-ncm build                       # diagnose, then build
+ncm build [--lint]              # diagnose, optionally lint, then build
 ncm clean [target] [--all]      # drop the build cache, a named cache, or every cache
 ncm runserver                   # build the mod and run the server
 ncm runclient                   # build the mod and run the client
 ncm asm <assembly>              # inspect any .NET assembly
+ncm callgraph [options]         # inspect the call graph and report call cycles
 ncm hook                        # check the injection rules of a mod
 ncm icon                        # write a white background mod icon
 ncm tool add|remove|list         # install, remove and list plugins
@@ -153,12 +156,15 @@ Resolve the `<Packages>` declared in the project config and copy their assemblie
 
 Diagnose and build the mod project in the current directory. The kernel reference assemblies under `Build/kernel` and the declared packages are laid down first, whatever is already there is kept, and only the missing files are fetched. Referenced projects are built too: one that is itself a mod is copied beside the output, so the mods directory picks it up, and anything else is embedded into the assembly as an embedded dependency. Before compiling, the api usage, C# syntax and injection rules are checked against the same references the runtime uses, so a rule an outdated kernel can no longer satisfy fails the build instead of loading. Then the project is compiled, the build targets the packages ship are run, and the result is deployed.
 
+With `--lint` the Roslynator code quality rules run over the same compilation after the regular checks. They are off by default, hidden editor-only hints are skipped, and the output is capped at 500 diagnostics.
+
 | Parameter | Description |
 |---|---|
 | `-c`, `--configuration <name>` | Build configuration, defaults to `Release` |
 | `--no-check` | Skip the api, syntax and injection checks and run `dotnet build` directly |
 | `--check-only` | Run the api, syntax and injection checks only, build nothing |
 | `--no-manifest` | Skip the `ncmod.json` lookup, treat the current directory as a plain C# project (must contain a csproj). Its assembly, project and package references are resolved through msbuild, restoring it first when needed |
+| `--lint` | Run the Roslynator code quality rules in addition to the api and syntax checks |
 
 ### `clean`
 
@@ -215,6 +221,8 @@ Inspect a .NET assembly: type list, type details, decompiled source, dependencie
 | `-r`, `--reference <dir>` | Extra directory to look for dependencies, repeatable |
 | `-o`, `--output <file>` | Write to a file: the text output, or the extracted resource |
 
+A type may be named by its short name, its full name, or its nested form. Nested types resolve as `Namespace.Outer.Inner`, `Namespace.Outer+Inner` or `Namespace.Outer/Inner`, and a name without its namespace resolves when the trailing part is unique.
+
 A resource name may be shortened to a unique trailing part. Extraction without `-o` lands in the current directory under the resource name.
 
 `-ar` names the resource after the file, which is how the loader matches an embedded dependency, and `ncmod.json` is the mod declaration it recognizes a mod by. A name the target already carries is replaced, so pointing at an existing resource is also how a replacement is done. Embedding rewrites the assembly, which drops a strong name signature.
@@ -226,6 +234,33 @@ ncm asm Build/kernel/NacreCraft.Game.dll -res NacreCraftGame.World.Level.Block.b
 ncm asm Build/kernel/NacreCraft.Game.dll -res blocks.txt      # same resource, into the current directory
 ncm asm Build/out/MyMod.dll -ar Build/packages/MyLib.dll    # embed a dependency into a built mod
 ncm asm Build/out/MyMod.dll -rr MyLib.dll                   # drop it again
+```
+
+### `callgraph`
+
+Scan the project sources and print the call graph: the entry methods, the conditional branches, the call ends, and the cycles that never leave. The graph is built from the same Roslyn compilation the checks use, so it follows the ncproj exclusions and references.
+
+| Parameter | Description |
+|---|---|
+| `-p`, `--project <dir>` | Project directory to inspect, defaults to the current directory or its nearest `.ncproj` parent |
+| `-r`, `--root <method>` | Start from this method instead of the detected entries, repeatable |
+| `--no-ncproj` | Ignore the ncproj config, scan every source file and allow a plain directory |
+| `--exclude <pattern>` | Skip source paths matching this pattern, repeatable, combined with the ncproj `Exclude` |
+| `--depth <n>` | Limit the tree depth, `0` means no limit |
+| `--tree` | Draw a top-down organisation tree instead of the indented list |
+| `--no-external` | Hide calls that leave the project sources |
+| `--no-cycles` | Skip the call cycle section |
+| `--no-color` | Disable ANSI colours in the console |
+| `-o`, `--output <file>` | Write the report to a file instead of the console |
+
+An entry is a method with no incoming call, `Main` first. A conditional call carries its test as `[if ...]`, `[else]`, `[&&]` or `[?.]`; a back edge is `[cycle]`, a call outside the sources is `[external]`, and a branch cut by `--depth` is `[depth]`. Calls to the same target under one caller are merged with `xN`, and a body is expanded once per report so later references say `[expanded]`.
+
+The cycle section lists the calls that have no exit and whose condition never flips. `build` reports the same set as `NC0004`, so a clean `callgraph` and a passing check agree. Trees are capped at 200 columns, 256 levels and 20000 nodes, which keeps a very wide graph bounded.
+
+```powershell
+ncm callgraph --tree --no-external
+ncm callgraph -r MyMod.Entry.OnLoad --depth 3
+ncm callgraph -o callgraph.txt
 ```
 
 ### `hook`
@@ -339,7 +374,24 @@ Everything the build needs at build time lives under `Build`: `Build/kernel` hol
 | `Deploy` | `To` — semicolon separated directories the built dll is copied into right after a successful build |
 | `Exclude` | `Include` — semicolon separated patterns kept out of everything ncm scans on its own: the compile source list, the api and syntax checks and the axaml pick up. Patterns are relative to the project root, `*` and `?` stay within one segment and `**` crosses directories. A pattern without a wildcard also covers everything under it, one with a wildcard has to match the whole path — see the note below the table. Patterns declared elsewhere, such as `<References>` or `<AvaloniaResources>`, are still honored as written, so an excluded directory can still be referenced on purpose |
 | `Tasks` | one `Task` per task with `Name`, `Description`, `Depends` and `Override`, holding `Exec` steps that run a command line, `Copy` steps that take `From` and `To`, `Zip` steps that pack the `From` directory into the `To` file, and `Tool` steps that take `Name`, `Method` and `Args` and call an installed plugin in this process, and `Script` steps that run JavaScript written inline or named through `File`. `$(Configuration)`, `$(ProjectDir)`, `$(ModId)`, `$(ModName)`, `$(ModVersion)` and `$(env:NAME)` are substituted in every attribute |
-| root | `Override` — the default for tasks that do not carry their own |
+| root | `Override` — the default for tasks that do not carry their own; `Bootstrap` — `true` marks a config that aggregates other projects instead of holding sources |
+
+### Bootstrap configs
+
+A workspace may hold several unrelated mods. Point the workspace at one `.ncproj` with `Bootstrap="true"`; it carries no sources and needs no `ncmod.json`, and the projects it references with the usual `<References><Project .../></References>` become its workspace.
+
+- `ncm` lists their tasks as `<config>/<task>`, where `<config>` is the config file name without `.ncproj`, and runs them in the owning project. A task declared on the bootstrap itself keeps its plain name.
+- The language server loads the referenced projects through the same config; see [Editor support](#editor-support).
+- A bootstrap cannot reference another bootstrap, and the error names both files.
+
+```xml
+<ncproj version="1" Bootstrap="true">
+  <References>
+    <Project Include="Mods/First" />
+    <Project Include="Mods/Second" />
+  </References>
+</ncproj>
+```
 
 ### `Exclude` patterns
 
@@ -438,6 +490,21 @@ Paths inside the global config resolve against its own directory, so a shared `<
 </ncproj>
 ```
 
+## Editor support
+
+The `VSCode/` extension (`NacreCraft NcMod`) starts the language server and adds the project and task views, a settings page and the `.ncproj` language support. It activates when the workspace contains a `.ncproj` or `ncmod.json`.
+
+- C# and JavaScript completion, including buffers that are not saved yet. A completion request never starts a full build unless `completion.build` is set to `on`; it is `off` by default.
+- Diagnostics for C# syntax, the mod API catalog, hook rules and JavaScript syntax, published as the file changes.
+- `project.load` decides how many projects are loaded: `onDemand` (default) loads a project when its `.ncproj` is opened or edited, together with its project references; `all` loads every project in the workspace at startup. A bootstrap config loads the projects it references.
+- Script completion and checking use the language server's `nacrecraft/scriptComplete` and `nacrecraft/scriptCheck` requests; project listing and loading use `nacrecraft/projects` and `nacrecraft/projectLoad`.
+
+The extension settings live in its own `config.json` under the extension storage and are edited from the settings page, not from `settings.json`.
+
+`VSCode/build.ps1` publishes the language server, compiles the extension and packs the `.vsix`.
+
 ## License
 
 Apache-2.0 — see [LICENSE](./LICENSE).
+
+Roslynator rules shipped under `NacreCraft.ModBuild.Tools/Analyzers/` are Apache-2.0; see `LICENSE.txt` and `NOTICE.md` beside them.
