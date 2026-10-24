@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-shot installer for the NetCraft development toolchain on macOS.
+# One-shot installer for the NacreCraft development toolchain on macOS.
 # Installs the .NET 10 SDK, the dotnet new project template and the ncm CLI.
 # Idempotent: existing pieces are skipped or updated in place, so reruns are safe.
 # Usage: ./tools/install-macos.sh
@@ -7,8 +7,8 @@
 set -eu
 
 CHANNEL="10.0"
-TEMPLATE_ID="NetCraft.ModsProjectType"
-TOOL_ID="NetCraft.ModBuild.Tools"
+TEMPLATE_ID="NacreCraft.ModsProjectType"
+TOOL_ID="NacreCraft.ModBuild.Tools"
 INSTALL_ROOT="$HOME/.dotnet"
 TOOLS_DIR="$INSTALL_ROOT/tools"
 SYSTEM_ROOT="/usr/local/share/dotnet"

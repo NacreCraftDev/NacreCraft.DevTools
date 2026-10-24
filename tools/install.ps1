@@ -1,4 +1,4 @@
-# One-shot installer for the NetCraft development toolchain.
+# One-shot installer for the NacreCraft development toolchain.
 # Installs the .NET 10 SDK, the dotnet new project template and the ncm CLI.
 # Idempotent: existing pieces are skipped or updated in place, so reruns are safe.
 # Usage: ./tools/install.ps1
@@ -6,8 +6,8 @@
 $ErrorActionPreference = "Stop"
 
 $Channel = "10.0"
-$TemplateId = "NetCraft.ModsProjectType"
-$ToolId = "NetCraft.ModBuild.Tools"
+$TemplateId = "NacreCraft.ModsProjectType"
+$ToolId = "NacreCraft.ModBuild.Tools"
 $InstallRoot = Join-Path $env:USERPROFILE ".dotnet"
 $ToolsDir = Join-Path $InstallRoot "tools"
 

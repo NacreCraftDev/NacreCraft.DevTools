@@ -1,0 +1,77 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "NacreCraft Project",
+  "scopeName": "text.xml",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#cdata"
+    },
+    {
+      "include": "#doctype"
+    },
+    {
+      "include": "#processing"
+    },
+    {
+      "include": "#tag"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "match": "<!--[\\s\\S]*?-->",
+      "name": "comment.block.xml"
+    },
+    "cdata": {
+      "match": "<!\\[CDATA\\[[\\s\\S]*?\\]\\]>",
+      "name": "string.unquoted.cdata.xml"
+    },
+    "doctype": {
+      "match": "<!DOCTYPE[^>]*>",
+      "name": "meta.tag.sgml.doctype.xml"
+    },
+    "processing": {
+      "match": "<\\?[\\s\\S]*?\\?>",
+      "name": "meta.tag.preprocessor.xml"
+    },
+    "tag": {
+      "patterns": [
+        {
+          "begin": "(<)([\\w:.-]+)",
+          "beginCaptures": {
+            "1": {
+              "name": "punctuation.definition.tag.begin.xml"
+            },
+            "2": {
+              "name": "entity.name.tag.xml"
+            }
+          },
+          "end": "(/?>)",
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.definition.tag.end.xml"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#attribute"
+            }
+          ]
+        }
+      ]
+    },
+    "attribute": {
+      "match": "([\\w:.-]+)\\s*=\\s*(\"[^\"]*\"|'[^']*')",
+      "captures": {
+        "1": {
+          "name": "entity.other.attribute-name.xml"
+        },
+        "2": {
+          "name": "string.quoted.xml"
+        }
+      }
+    }
+  }
+}

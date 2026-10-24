@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# One-shot installer for the NetCraft development toolchain on Linux.
+# One-shot installer for the NacreCraft development toolchain on Linux.
 # Installs the .NET 10 SDK, the dotnet new project template and the ncm CLI.
 # Idempotent: existing pieces are skipped or updated in place, so reruns are safe.
 # Usage: ./tools/install-linux.sh
@@ -7,8 +7,8 @@
 set -eu
 
 CHANNEL="10.0"
-TEMPLATE_ID="NetCraft.ModsProjectType"
-TOOL_ID="NetCraft.ModBuild.Tools"
+TEMPLATE_ID="NacreCraft.ModsProjectType"
+TOOL_ID="NacreCraft.ModBuild.Tools"
 INSTALL_ROOT="$HOME/.dotnet"
 TOOLS_DIR="$INSTALL_ROOT/tools"
 

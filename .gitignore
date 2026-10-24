@@ -12,3 +12,9 @@ obj_v/
 **/.pslocal
 updata.ps1
 .psctx.json
+
+#extension build output and dependencies
+node_modules/
+VSCode/out/
+VSCode/server/
+*.vsix

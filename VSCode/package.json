@@ -1,0 +1,111 @@
+{
+  "name": "nacrecraft-ncmod",
+  "displayName": "NacreCraft NcMod",
+  "description": "Injection rule inspection for NacreCraft mods",
+  "version": "0.1.0",
+  "publisher": "nacrecraft",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Linters",
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "workspaceContains:**/*.ncproj",
+    "workspaceContains:**/ncmod.json"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "ncproj",
+        "aliases": [
+          "NacreCraft Project"
+        ],
+        "extensions": [
+          ".ncproj"
+        ],
+        "icon": {
+          "light": "media/ncproj.svg",
+          "dark": "media/ncproj.svg"
+        },
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "ncproj",
+        "scopeName": "text.xml",
+        "path": "./syntaxes/ncproj.tmLanguage.json"
+      }
+    ],
+    "iconThemes": [
+      {
+        "id": "nacrecraft",
+        "label": "NacreCraft",
+        "path": "./fileicons/nacrecraft-icon-theme.json"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "nacrecraft",
+          "title": "NacreCraft",
+          "icon": "media/nacrecraft.svg"
+        }
+      ]
+    },
+    "views": {
+      "nacrecraft": [
+        {
+          "id": "nacrecraft.project",
+          "name": "Project"
+        },
+        {
+          "id": "nacrecraft.tasks",
+          "name": "Tasks"
+        },
+        {
+          "id": "nacrecraft.page",
+          "name": "Page",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "nacrecraft.checkManifest",
+        "title": "NacreCraft: Check ncmod.json"
+      },
+      {
+        "command": "nacrecraft.openPage",
+        "title": "NacreCraft: Open Page"
+      },
+      {
+        "command": "nacrecraft.create",
+        "title": "NacreCraft: Create ncmod"
+      },
+      {
+        "command": "nacrecraft.enableIconTheme",
+        "title": "NacreCraft: Use NacreCraft File Icons"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^2.24.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.4.0",
+    "vscode-oniguruma": "^2.0.1",
+    "vscode-textmate": "^9.3.2"
+  }
+}

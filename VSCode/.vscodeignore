@@ -1,0 +1,12 @@
+.vscode/**
+src/**
+mediaSrc/**
+build.ps1
+tsconfig.json
+package-lock.json
+*.vsix
+out/**/*.map
+node_modules/esbuild/**
+node_modules/@esbuild/**
+node_modules/vscode-textmate/**
+node_modules/vscode-oniguruma/**

@@ -1,0 +1,111 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NacreCraft.ModBuild</RootNamespace>
+
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>ncm</ToolCommandName>
+    <PackageId>NacreCraft.ModBuild.Tools</PackageId>
+    <Description>NacreCraft mod development helper tools</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+
+    <!--
+      The policy checks derive from DiagnosticAnalyzer, which makes the analyzer rules apply to this assembly. They all
+      assume a distributable analyzer package: this one is an internal check compiled into the tool and never shipped as
+      an analyzer, so targeting the tool's own framework and skipping release tracking are both intended.
+    -->
+    <NoWarn>$(NoWarn);RS1036;RS1041;RS2008</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\iconttf.ttf" LogicalName="iconttf.ttf" />
+  </ItemGroup>
+
+  <!--
+    The engine resolves these assemblies by name from the local SDK, so a NuGet copy
+    left in the output folder wins first and mismatches the SDK, breaking the resolvers
+    and targets; delete it after build.
+  -->
+  <Target Name="DropMsBuildRuntime" AfterTargets="Build">
+    <ItemGroup>
+      <MsBuildRuntimeFile Include="$(OutputPath)Microsoft.Build*.dll;$(OutputPath)Microsoft.NET.StringTools.dll" />
+    </ItemGroup>
+    <Delete Files="@(MsBuildRuntimeFile)" />
+  </Target>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Gui\ui.html" LogicalName="ui.html" />
+    <EmbeddedResource Include="Gui\marked.min.js" LogicalName="marked.min.js" />
+  </ItemGroup>
+  <!--
+    Roslynator rules ship beside the tool and are loaded only for the lint option,
+    so a normal check pays nothing for them.
+  -->
+  <ItemGroup>
+    <None Update="Analyzers\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="ICSharpCode.Decompiler" Version="11.1.0.9782" />
+    <!--
+      Jint runs the experimental task scripts; the engine exposes one narrow api object and
+      never AllowClr, so a script reaches only what the tool hands it.
+    -->
+    <PackageReference Include="Jint" Version="4.17.0" />
+    <!--
+      Acornima is the parser Jint uses; completion reads its syntax tree to bind a variable
+      without running the script.
+    -->
+    <PackageReference Include="Acornima" Version="1.7.0" />
+    <!--
+      Microsoft.Build is compile-only and ships without its own runtime assemblies,
+      because the engine must use the SDK's copy or the resolvers and targets fail on
+      a mismatched interface; Targets/MsBuildLibrary.cs loads them from the SDK at runtime.
+    -->
+    <PackageReference Include="Microsoft.Build" Version="17.14.28" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.Build.Framework" Version="17.14.28" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.Build.Utilities.Core" Version="17.14.28" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
+    <PackageReference Include="Mono.Cecil" Version="0.11.6" />
+    <!--
+      Newtonsoft is only for ncmod.json, the one json file a person writes by hand.
+      Its reader keeps line and column on every token, so a bad manifest can be reported at the exact entry it broke on,
+      which System.Text.Json cannot do.
+    -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="NuGet.Protocol" Version="7.9.0" />
+    <PackageReference Include="Photino.NET" Version="4.0.16" />
+    <PackageReference Include="SixLabors.ImageSharp.Drawing" Version="2.1.5" />
+    <PackageReference Include="Spectre.Console" Version="0.57.2" />
+    <PackageReference Include="YamlDotNet" Version="18.1.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--The language server reuses the inspection code rather than keeping a second copy of it-->
+    <InternalsVisibleTo Include="NacreCraft.NcMod.LangServer" />
+  </ItemGroup>
+
+  <!--Pack the project template into the assembly, so init does not depend on dotnet new or a machine wide install-->
+  <Target Name="PackTemplate" BeforeTargets="PrepareForBuild">
+    <ItemGroup>
+      <_TemplateFiles Include="..\NacreCraft.ModsProjectType\content\ncm\**\*.*"
+                      Exclude="..\NacreCraft.ModsProjectType\content\ncm\.template.config\**" />
+    </ItemGroup>
+    <RemoveDir Directories="$(BaseIntermediateOutputPath)template" />
+    <Copy SourceFiles="@(_TemplateFiles)"
+          DestinationFolder="$(BaseIntermediateOutputPath)template\%(RecursiveDir)" />
+    <ZipDirectory SourceDirectory="$(BaseIntermediateOutputPath)template"
+                  DestinationFile="$(BaseIntermediateOutputPath)ncm-template.zip"
+                  Overwrite="true" />
+  </Target>
+
+  <ItemGroup>
+    <EmbeddedResource Include="$(BaseIntermediateOutputPath)ncm-template.zip" LogicalName="ncm-template.zip" />
+  </ItemGroup>
+
+</Project>

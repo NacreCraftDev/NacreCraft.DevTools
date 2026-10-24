@@ -1,0 +1,19 @@
+{
+  "id": "test",
+  "version": "0.1.0",
+  "name": "test",
+  "description": "Rewrite this line; it shows up on the mods page",
+  "authors": [],
+  "contributors": [],
+  "license": "",
+  "contact": {
+    "homepage": "",
+    "sources": "",
+    "issues": ""
+  },
+  "environment": "both",
+  "entry": "test.ModEntry",
+  "depends": {},
+  "hooks": [],
+  "icon": "icon.png"
+}

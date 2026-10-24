@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NacreCraft Template</title>
+<style>
+  :root {
+    --line: #d0d7de;
+    --line-soft: #eaeef2;
+    --text: #24292f;
+    --muted: #656d76;
+    --accent: #0969da;
+    --bg-side: #f6f8fa;
+    --bg-code: #f6f8fa;
+    --ok: #1a7f37;
+    --warn: #9a6700;
+    --missing: #cf222e;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    display: flex;
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+    font-size: 14px;
+    color: var(--text);
+    background: #fff;
+  }
+
+  /* Custom scrollbar because the default one is wide and distracting */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: #c9d1d9;
+    border: 2px solid transparent;
+    background-clip: content-box;
+    border-radius: 6px;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: #a8b3bd; background-clip: content-box; }
+  ::-webkit-scrollbar-corner { background: transparent; }
+
+  #side {
+    width: 290px;
+    flex: none;
+    overflow-y: auto;
+    background: var(--bg-side);
+    border-right: 1px solid var(--line);
+  }
+  #side .cap {
+    position: sticky;
+    top: 0;
+    padding: 14px 16px 10px;
+    font-size: 12px;
+    letter-spacing: .06em;
+    color: var(--muted);
+    background: var(--bg-side);
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .usage {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .usage .dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    transform: translateY(-1px);
+  }
+  .usage .sym {
+    font-family: Consolas, "Cascadia Mono", monospace;
+    font-size: 12.5px;
+    word-break: break-all;
+  }
+  .usage.ok .dot { background: var(--ok); }
+  .usage.warn .dot { background: var(--warn); }
+  .usage.missing .dot { background: var(--missing); }
+  .usage.ok .sym { color: var(--ok); }
+  .usage.warn .sym { color: var(--warn); }
+  .usage.missing .sym { color: var(--missing); }
+  .usage.ok { cursor: default; }
+  .usage.warn, .usage.missing { cursor: pointer; }
+  .usage.warn:hover { background: #fff8c5; }
+  .usage.missing:hover { background: #ffebe9; }
+  .usage.active { box-shadow: inset 3px 0 0 var(--accent); }
+
+  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #header { padding: 16px 30px 12px; border-bottom: 1px solid var(--line); }
+  #header h1 { margin: 0; font-size: 17px; }
+  #legend { margin-top: 5px; font-size: 12px; color: var(--muted); }
+  #legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin: 0 5px 0 12px; }
+  #legend .dot.ok { background: var(--ok); }
+  #legend .dot.warn { background: var(--warn); }
+  #legend .dot.missing { background: var(--missing); }
+
+  #doc, #detail { flex: 1; overflow-y: auto; padding: 22px 30px 70px; }
+  #detail { display: none; }
+  #doc > *:first-child { margin-top: 0; }
+  #doc h1 { font-size: 25px; border-bottom: 1px solid var(--line-soft); padding-bottom: 7px; }
+  #doc h2 { font-size: 19px; border-bottom: 1px solid var(--line-soft); padding-bottom: 5px; margin-top: 30px; }
+  #doc h3 { font-size: 16px; margin-top: 24px; }
+  #doc p, #doc li { line-height: 1.7; }
+  #doc code, .detail code {
+    padding: 2px 5px;
+    border-radius: 4px;
+    background: var(--bg-code);
+    font-family: Consolas, "Cascadia Mono", monospace;
+    font-size: 12.5px;
+  }
+  #doc pre { padding: 13px 15px; border-radius: 6px; background: var(--bg-code); overflow-x: auto; }
+  #doc pre code { padding: 0; background: none; font-size: 12.5px; line-height: 1.55; }
+  #doc table { border-collapse: collapse; margin: 14px 0; }
+  #doc th, #doc td { border: 1px solid var(--line); padding: 6px 12px; text-align: left; }
+  #doc th { background: var(--bg-code); }
+  #doc blockquote { margin: 12px 0; padding: 2px 0 2px 14px; border-left: 3px solid var(--line); color: var(--muted); }
+  #doc a { color: var(--accent); }
+  #doc hr { margin: 26px 0; border: none; border-top: 1px solid var(--line-soft); }
+  .hl-ok { color: var(--ok); font-weight: 600; }
+  .hl-warn { color: var(--warn); font-weight: 600; }
+  .hl-missing { color: var(--missing); font-weight: 600; }
+  .hl-warn, .hl-missing { cursor: pointer; }
+  .hl-warn:hover { background: #fff8c5; border-radius: 3px; }
+  .hl-missing:hover { background: #ffebe9; border-radius: 3px; }
+
+  #back {
+    margin-bottom: 16px;
+    padding: 4px 12px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--text);
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  #back:hover { background: var(--bg-side); }
+  .detail-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .badge { padding: 2px 9px; border-radius: 10px; font-size: 12px; }
+  .badge.warn { color: var(--warn); background: #fff8c5; border: 1px solid #d4a72c; }
+  .badge.missing { color: var(--missing); background: #ffebe9; border: 1px solid #ff8182; }
+  .detail-sym { font-size: 15px; font-weight: 600; padding: 3px 8px; }
+  .detail h3 { margin: 24px 0 8px; font-size: 13px; color: var(--muted); }
+  .detail-lead { line-height: 1.7; }
+  .loc { margin-bottom: 10px; }
+  .loc-file { margin-bottom: 4px; font-size: 12px; color: var(--muted); }
+  .loc pre { margin: 0; padding: 10px 12px; border-radius: 6px; background: var(--bg-code); overflow-x: auto; }
+  .loc code { padding: 0; background: none; }
+  .hit { border-radius: 3px; padding: 0 2px; font-weight: 600; }
+  .hit.warn { background: #fff8c5; color: var(--warn); }
+  .hit.missing { background: #ffebe9; color: var(--missing); }
+  .candidates { margin: 0; padding: 0; list-style: none; }
+  .candidates li { margin-bottom: 6px; }
+  .candidates code { padding: 2px 7px; }
+  .empty { color: var(--muted); }
+</style>
+</head>
+<body>
+  <div id="side">
+    <div class="cap">Project API usage</div>
+    <div id="usageList"></div>
+  </div>
+  <div id="main">
+    <div id="header">
+      <h1>NacreCraft Template</h1>
+      <div id="legend"></div>
+    </div>
+    <div id="doc"></div>
+    <div id="detail" class="detail"></div>
+  </div>
+
+<script>/*MARKED*/</script>
+<script>
+const DATA = /*DATA*/;
+
+const sideEl = document.getElementById('side');
+const usageList = document.getElementById('usageList');
+const docEl = document.getElementById('doc');
+const detailEl = document.getElementById('detail');
+const legendEl = document.getElementById('legend');
+
+const STATE_LABEL = { ok: 'correct', warn: 'suspicious', missing: 'unknown' };
+const STATE_TEXT = { ok: 'the usage is correct', warn: 'this member is not declared in the catalog', missing: 'this type is not declared in the catalog' };
+
+const bySymbol = {};
+const usageItems = DATA.usage || [];
+usageItems.forEach(function (item) { bySymbol[item.symbol] = item; });
+
+// Problems are listed first, and the backend uses the same order, so keep both in sync
+function isProblem(item) { return item.state !== 'ok'; }
+
+// renderLegend fills the summary line at the top and renders nothing when nothing was scanned
+function renderLegend() {
+  legendEl.textContent = '';
+  if (usageItems.length === 0) return;
+
+  const counts = { ok: 0, warn: 0, missing: 0 };
+  usageItems.forEach(function (item) {
+    if (counts[item.state] !== undefined) counts[item.state] += 1;
+  });
+
+  legendEl.appendChild(document.createTextNode('Project uses ' + usageItems.length + ' mod api symbol(s):'));
+  ['ok', 'warn', 'missing'].forEach(function (state) {
+    const dot = document.createElement('span');
+    dot.className = 'dot ' + state;
+    legendEl.appendChild(dot);
+    legendEl.appendChild(document.createTextNode(STATE_LABEL[state] + ' ' + counts[state]));
+  });
+}
+
+// renderSidebar lists the mod APIs used by the project and hides the whole sidebar when nothing was scanned, leaving just the document
+function renderSidebar() {
+  if (usageItems.length === 0) {
+    sideEl.style.display = 'none';
+    return;
+  }
+
+  usageItems.forEach(function (item) {
+    const node = document.createElement('div');
+    node.className = 'usage ' + item.state;
+    node.dataset.symbol = item.symbol;
+
+    const dot = document.createElement('span');
+    dot.className = 'dot';
+    node.appendChild(dot);
+
+    const sym = document.createElement('span');
+    sym.className = 'sym';
+    sym.textContent = item.symbol;
+    sym.title = STATE_TEXT[item.state];
+    node.appendChild(sym);
+
+    // Correct usages have nothing to expand, so only problems are clickable
+    if (isProblem(item)) {
+      node.onclick = function () { showDetail(item.symbol); };
+    }
+
+    usageList.appendChild(node);
+  });
+}
+
+// markActive highlights the selected sidebar entry, which only clickable items have
+function markActive(symbol) {
+  document.querySelectorAll('.usage').forEach(function (node) {
+    node.classList.toggle('active', node.dataset.symbol === symbol);
+  });
+}
+
+// appendHit wraps the target symbol in a source line so the problem stands out
+function appendHit(code, text, symbol, state) {
+  const index = text.indexOf(symbol);
+  if (index < 0) {
+    code.textContent = text;
+    return;
+  }
+
+  code.appendChild(document.createTextNode(text.slice(0, index)));
+  const hit = document.createElement('span');
+  hit.className = 'hit ' + state;
+  hit.textContent = symbol;
+  code.appendChild(hit);
+  code.appendChild(document.createTextNode(text.slice(index + symbol.length)));
+}
+
+function leadParagraph(parts) {
+  const p = document.createElement('p');
+  p.className = 'detail-lead';
+
+  parts.forEach(function (part) {
+    if (typeof part === 'string') {
+      p.appendChild(document.createTextNode(part));
+      return;
+    }
+    const code = document.createElement('code');
+    code.textContent = part.code;
+    p.appendChild(code);
+  });
+
+  return p;
+}
+
+// renderDetail shows a broken usage with its source locations and a suggested fix
+function renderDetail(item) {
+  detailEl.textContent = '';
+
+  const back = document.createElement('button');
+  back.id = 'back';
+  back.textContent = '← Back to the document';
+  back.onclick = showDocument;
+  detailEl.appendChild(back);
+
+  const head = document.createElement('div');
+  head.className = 'detail-head';
+
+  const badge = document.createElement('span');
+  badge.className = 'badge ' + item.state;
+  badge.textContent = STATE_LABEL[item.state];
+  head.appendChild(badge);
+
+  const name = document.createElement('code');
+  name.className = 'detail-sym';
+  name.textContent = item.symbol;
+  head.appendChild(name);
+  detailEl.appendChild(head);
+
+  detailEl.appendChild(item.state === 'warn'
+    ? leadParagraph(['Type ', { code: item.type }, ' is declared, but it has no member ', { code: item.member }, '.'])
+    : leadParagraph(['The catalog does not declare ', { code: item.type }, '; the name may be misspelled.']));
+
+  const locTitle = document.createElement('h3');
+  locTitle.textContent = 'Where it appears in the source';
+  detailEl.appendChild(locTitle);
+
+  const locations = item.locations || [];
+  if (locations.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'No locations recorded.';
+    detailEl.appendChild(empty);
+  }
+
+  locations.forEach(function (location) {
+    const box = document.createElement('div');
+    box.className = 'loc';
+
+    const file = document.createElement('div');
+    file.className = 'loc-file';
+    file.textContent = location.file + ':' + location.line;
+    box.appendChild(file);
+
+    const pre = document.createElement('pre');
+    const code = document.createElement('code');
+    appendHit(code, location.text, item.symbol, item.state);
+    pre.appendChild(code);
+    box.appendChild(pre);
+
+    detailEl.appendChild(box);
+  });
+
+  const fixTitle = document.createElement('h3');
+  fixTitle.textContent = item.state === 'warn' ? 'Members this type actually has' : 'Closest names in the catalog';
+  detailEl.appendChild(fixTitle);
+
+  const candidates = item.candidates || [];
+  if (candidates.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'No closer name.';
+    detailEl.appendChild(empty);
+    return;
+  }
+
+  const list = document.createElement('ul');
+  list.className = 'candidates';
+  candidates.forEach(function (candidate) {
+    const li = document.createElement('li');
+    const code = document.createElement('code');
+    code.textContent = candidate;
+    li.appendChild(code);
+    list.appendChild(li);
+  });
+  detailEl.appendChild(list);
+}
+
+function showDetail(symbol) {
+  const item = bySymbol[symbol];
+  if (!item || !isProblem(item)) return;
+
+  docEl.style.display = 'none';
+  detailEl.style.display = 'block';
+  detailEl.scrollTop = 0;
+  renderDetail(item);
+  markActive(symbol);
+}
+
+// highlightUsage colors mod API symbols in the document, but only the ones the project actually uses, and does nothing when the table is empty
+function highlightUsage(root) {
+  if (usageItems.length === 0) return;
+
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+
+  nodes.forEach(function (node) {
+    const text = node.nodeValue;
+    if (!text || text.indexOf('.') < 0) return;
+
+    const pattern = /([A-Za-z_]\w*)\.([A-Za-z_]\w*)/g;
+    let match;
+    let last = 0;
+    let fragment = null;
+
+    while ((match = pattern.exec(text)) !== null) {
+      const symbol = match[1] + '.' + match[2];
+      const item = bySymbol[symbol];
+      if (!item) continue;
+
+      if (!fragment) fragment = document.createDocumentFragment();
+      if (match.index > last) fragment.appendChild(document.createTextNode(text.slice(last, match.index)));
+
+      const span = document.createElement('span');
+      span.className = 'hl-' + item.state;
+      span.textContent = symbol;
+      span.title = STATE_TEXT[item.state];
+      if (isProblem(item)) {
+        span.onclick = function () { showDetail(symbol); };
+      }
+      fragment.appendChild(span);
+      last = match.index + symbol.length;
+    }
+
+    if (!fragment) return;
+    if (last < text.length) fragment.appendChild(document.createTextNode(text.slice(last)));
+    node.parentNode.replaceChild(fragment, node);
+  });
+}
+
+function showDocument() {
+  detailEl.style.display = 'none';
+  docEl.style.display = 'block';
+  docEl.innerHTML = marked.parse(DATA.document || '(the catalog provides no document)');
+  docEl.scrollTop = 0;
+  highlightUsage(docEl);
+  markActive(null);
+}
+
+renderLegend();
+renderSidebar();
+showDocument();
+</script>
+</body>
+</html>

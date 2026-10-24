@@ -1,0 +1,58 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    NacreCraft mod project template package.
+    After packing, dotnet new install NacreCraft.ModsProjectType enables dotnet new ncm.
+    content/ncm/Build/kernel/ ships reference assemblies, so pack syncs them from
+    reference/ first to avoid shipping stale interfaces.
+  -->
+
+  <PropertyGroup>
+    <PackageType>Template</PackageType>
+    <PackageId>NacreCraft.ModsProjectType</PackageId>
+    <Description>NacreCraft mod project template, create with dotnet new ncm</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <TargetFramework>net10.0</TargetFramework>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <!-- NU5128 empty dependency group and NU5100 because template reference assemblies must not live under lib/ -->
+    <NoWarn>$(NoWarn);NU5128;NU5100</NoWarn>
+    <!-- The template contains .cs files meant for generated projects, so they must not be compiled as this package's source -->
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <!-- Source for the sync, defaults to this repo's reference/ and can be overridden -->
+    <NacreCraftRuntimeDir Condition="'$(NacreCraftRuntimeDir)' == ''">$(MSBuildThisFileDirectory)..\reference</NacreCraftRuntimeDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      All template files go into the package, except Build\kernel (added by
+      SyncNacreCraftLibs) and obj/bin, whose build leftovers would otherwise leak
+      into every new project.
+    -->
+    <None Include="content\**\*"
+          Exclude="content\ncm\Build\kernel\**\*;content\ncm\obj\**\*;content\ncm\bin\**\*"
+          Pack="true" PackagePath="content\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!--
+    SyncNacreCraftLibs copies the kernel reference assemblies into the template and adds
+    them to the package; the item must be added at this point because Build\kernel does
+    not exist yet on the first pack, so the evaluation-time None glob misses it and the
+    package would ship without reference assemblies.
+  -->
+  <Target Name="SyncNacreCraftLibs" BeforeTargets="_GetPackageFiles">
+    <ItemGroup>
+      <NacreCraftLibSource Include="$(NacreCraftRuntimeDir)\*.dll" />
+      <NacreCraftLibOutput Include="$(MSBuildThisFileDirectory)content\ncm\Build\kernel" />
+    </ItemGroup>
+    <Error Condition="'@(NacreCraftLibSource)' == ''"
+           Text="No NacreCraft reference assemblies found; check the directory NacreCraftRuntimeDir points to: $(NacreCraftRuntimeDir)" />
+    <MakeDir Directories="@(NacreCraftLibOutput)" />
+    <Copy SourceFiles="@(NacreCraftLibSource)" DestinationFolder="@(NacreCraftLibOutput)" SkipUnchangedFiles="true" />
+    <ItemGroup>
+      <None Include="$(MSBuildThisFileDirectory)content\ncm\Build\kernel\*.dll" Pack="true" PackagePath="content\ncm\Build\kernel\" />
+    </ItemGroup>
+    <Message Importance="high" Text="Synced @(NacreCraftLibSource->Count()) NacreCraft reference assemblies -> content\ncm\Build\kernel" />
+  </Target>
+
+</Project>
