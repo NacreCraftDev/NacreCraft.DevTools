@@ -22,8 +22,7 @@ internal static class CallGraphTool
             new("-r, --root <method>", "Start from this method instead of the detected entries, repeatable"),
             new("--no-ncproj", "Ignore the ncproj config, scan every source file and allow a plain directory"),
             new("--exclude <pattern>", "Skip source paths matching this pattern, repeatable"),
-            new("--depth <n>", "Limit tree depth, 0 means no limit"),
-            new("--tree", "Draw a top down organisation tree instead of the indented list"),
+            new("--depth <n>", "Limit the call depth, 0 means no limit"),
             new("--no-external", "Hide calls that leave the project sources"),
             new("--no-cycles", "Skip the call cycle check"),
             new("--no-color", "Disable ansi colours in the console"),
@@ -40,7 +39,6 @@ internal static class CallGraphTool
         var noExternal = false;
         var noCycles = false;
         var noColor = false;
-        var tree = false;
         var depth = NoLimit;
 
         for (var index = 0; index < args.Length; index++)
@@ -75,9 +73,6 @@ internal static class CallGraphTool
                     break;
                 case "--no-cycles":
                     noCycles = true;
-                    break;
-                case "--tree":
-                    tree = true;
                     break;
                 case "--no-color":
                     noColor = true;
@@ -191,7 +186,7 @@ internal static class CallGraphTool
             && !noColor
             && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("NO_COLOR"));
 
-        var text = CallGraphRender.Render(graph, entries, rootDirectory, depth, !noExternal, !noCycles, tree, color);
+        var text = CallGraphRender.Render(graph, entries, rootDirectory, depth, !noExternal, !noCycles, color);
         if (output is null)
         {
             Console.Write(text);
@@ -320,5 +315,5 @@ internal static class CallGraphTool
 
     private static void Usage()
         => Console.WriteLine(
-            "Usage: ncm callgraph [-p|--project <dir>] [-r|--root <method>] [--no-ncproj] [--exclude <pattern>] [--depth <n>] [--tree] [--no-external] [--no-cycles] [--no-color] [-o|--output <file>]");
+            "Usage: ncm callgraph [-p|--project <dir>] [-r|--root <method>] [--no-ncproj] [--exclude <pattern>] [--depth <n>] [--no-external] [--no-cycles] [--no-color] [-o|--output <file>]");
 }

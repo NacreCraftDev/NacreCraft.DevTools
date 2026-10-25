@@ -49,6 +49,7 @@ ncm runserver                   # build the mod and run the server
 ncm runclient                   # build the mod and run the client
 ncm asm <assembly>              # inspect any .NET assembly
 ncm callgraph [options]         # inspect the call graph and report call cycles
+ncm flow [class|file]            # show a class execution order as a tree
 ncm hook                        # check the injection rules of a mod
 ncm icon                        # write a white background mod icon
 ncm tool add|remove|list         # install, remove and list plugins
@@ -61,7 +62,7 @@ dotnet new ncm -n MyMod         # or create from the template directly
 
 ## Command reference
 
-`ncm help` lists every tool, `ncm help <tool>` prints the parameters below.
+`ncm help` lists every tool, `ncm help <tool>` prints one tool's parameters, and `ncm help all` prints every tool's help in one run.
 
 ### `init`
 
@@ -158,6 +159,8 @@ Diagnose and build the mod project in the current directory. The kernel referenc
 
 With `--lint` the Roslynator code quality rules run over the same compilation after the regular checks. They are off by default, hidden editor-only hints are skipped, and the output is capped at 500 diagnostics.
 
+With `--taint` every method parameter is treated as untrusted and followed to a dangerous api, which is reported as `NC0005` beside the flat `NC0003` hit. The report carries the call chain, so a value that is only handed to `Marshal` after passing through two helpers no longer looks like a plain api usage.
+
 | Parameter | Description |
 |---|---|
 | `-c`, `--configuration <name>` | Build configuration, defaults to `Release` |
@@ -165,6 +168,7 @@ With `--lint` the Roslynator code quality rules run over the same compilation af
 | `--check-only` | Run the api, syntax and injection checks only, build nothing |
 | `--no-manifest` | Skip the `ncmod.json` lookup, treat the current directory as a plain C# project (must contain a csproj). Its assembly, project and package references are resolved through msbuild, restoring it first when needed |
 | `--lint` | Run the Roslynator code quality rules in addition to the api and syntax checks |
+| `--taint` | Follow untrusted input to a dangerous api after the regular checks |
 
 ### `clean`
 
@@ -246,21 +250,103 @@ Scan the project sources and print the call graph: the entry methods, the condit
 | `-r`, `--root <method>` | Start from this method instead of the detected entries, repeatable |
 | `--no-ncproj` | Ignore the ncproj config, scan every source file and allow a plain directory |
 | `--exclude <pattern>` | Skip source paths matching this pattern, repeatable, combined with the ncproj `Exclude` |
-| `--depth <n>` | Limit the tree depth, `0` means no limit |
-| `--tree` | Draw a top-down organisation tree instead of the indented list |
+| `--depth <n>` | Limit the call depth, `0` means no limit |
 | `--no-external` | Hide calls that leave the project sources |
 | `--no-cycles` | Skip the call cycle section |
 | `--no-color` | Disable ANSI colours in the console |
 | `-o`, `--output <file>` | Write the report to a file instead of the console |
 
-An entry is a method with no incoming call, `Main` first. A conditional call carries its test as `[if ...]`, `[else]`, `[&&]` or `[?.]`; a back edge is `[cycle]`, a call outside the sources is `[external]`, and a branch cut by `--depth` is `[depth]`. Calls to the same target under one caller are merged with `xN`, and a body is expanded once per report so later references say `[expanded]`.
+An entry is a method with no incoming call, `Main` first. A conditional call carries its test as `[if ...]`, `[else]`, `[&&]` or `[?.]`; a call back into a method still being expanded is `[recursive]`, a call outside the sources is `[external]`, and a branch cut by `--depth` is `[depth]`. Calls to the same target under one caller are merged with `xN`, and a body is expanded once per report so later references say `[expanded]`.
 
-The cycle section lists the calls that have no exit and whose condition never flips. `build` reports the same set as `NC0004`, so a clean `callgraph` and a passing check agree. Trees are capped at 200 columns, 256 levels and 20000 nodes, which keeps a very wide graph bounded.
+The cycle section lists the calls that have no exit and whose condition never flips. `build` reports the same set as `NC0004`, so a clean `callgraph` and a passing check agree. A walk is capped at 256 levels and 20000 nodes, which keeps a very wide graph bounded.
 
 ```powershell
-ncm callgraph --tree --no-external
+ncm callgraph --no-external
 ncm callgraph -r MyMod.Entry.OnLoad --depth 3
 ncm callgraph -o callgraph.txt
+```
+
+### `flow`
+
+Show the execution order of a class as a tree, without reading the C#. Each method's statements are listed in order, with branches, loops, `try`/`catch`, `using`, `lock` and local functions nested below the step that owns them. The outline is built from the same Roslyn operations the call graph uses.
+
+| Parameter | Description |
+|---|---|
+| `-p`, `--project <dir>` | Project directory to inspect, defaults to the current directory |
+| `-f`, `--file <path>` | Source file to inspect, repeatable, defaults to every project source |
+| `-c`, `--class <name>` | Class to show, defaults to every class in the selected files |
+| `--no-ncproj` | Ignore the ncproj config, scan every source file and allow a plain directory |
+| `--exclude <pattern>` | Skip source paths matching this pattern, repeatable |
+| `--depth <n>` | Limit nested statement depth, `0` means no limit |
+| `--all` | Expand every class body, not only the class named with `--class` |
+| `--no-color` | Disable ANSI colours in the console |
+| `-o`, `--output <file>` | Write the outline to a file instead of the console |
+
+Without `--class` the command lists the classes and their method signatures; naming a class expands its method bodies. A path ending in `.cs` is taken as a file, so `ncm flow Main/Site/AccountAdminEndpoints.cs` and `ncm flow AccountAdminEndpoints` both work. Steps use the same tree branches as the call graph: `├─` when another step follows, `└─` for the last one, and nested blocks carry `│` under their parent.
+
+```powershell
+ncm flow AccountAdminEndpoints
+ncm flow -f Main/Site/AccountAdminEndpoints.cs
+ncm flow --all -o flow.txt
+```
+
+### `taint`
+
+Follow untrusted values from a root method to a sink and print every route that carries one there. The walk uses the same Roslyn operation tree as the call graph, so it follows a value through locals, assignments, fields, properties, arguments and local calls — which is what a text search over the sources cannot do.
+
+| Parameter | Description |
+|---|---|
+| `-p`, `--project <dir>` | Project directory to inspect, defaults to the current directory |
+| `-f`, `--file <path>` | Source file to inspect, repeatable, defaults to every project source |
+| `-c`, `--class <name>` | Class to inspect, repeatable |
+| `-m`, `--method <name>` | Method to inspect, repeatable |
+| `--no-ncproj` | Ignore the ncproj config, scan every source file and allow a plain directory |
+| `--exclude <pattern>` | Skip source paths matching this pattern, repeatable |
+| `-r`, `--root <method>` | Root method whose parameters are untrusted, repeatable, defaults to every method in scope |
+| `--root-parameter <name>` | Only treat this parameter of a root as untrusted, repeatable; every parameter is seeded when omitted |
+| `--source <pattern>` | Treat a matching method as a source: what it returns is untrusted, repeatable |
+| `--sink <pattern>` | Treat a matching method as a sink, repeatable |
+| `--sanitizer <pattern>` | Treat a matching method as a sanitizer: what it returns is clean, repeatable |
+| `--rules <file>` | Json file with `sources`, `sinks` and `sanitizers` arrays |
+| `--depth <n>` | Interprocedural depth, defaults to `8`, `0` means the internal limit |
+| `--interprocedural <mode>` | `none` or `summary`, defaults to `summary` |
+| `--no-fields` | Do not follow fields and properties |
+| `--no-external` | Stop propagation at the project boundary instead of following calls out of it |
+| `--max-paths <n>` | Stop after this many paths, defaults to `200` |
+| `--no-color` | Disable ANSI colours in the console |
+| `-o`, `--output <file>` | Write the report to a file instead of the console |
+
+A pattern matches a method by full name, by type and method name, or by method name alone, with `*` and `?` as wildcards; `System.IO.File.*` therefore covers every `File` overload. The dangerous apis the syntax check already knows are sinks on their own, so `--sink` is for the calls this project considers dangerous rather than for repeating `NC0003`.
+
+Every parameter of a root is seeded by index, so a value handed to the second parameter is not mistaken for the first; `--root-parameter` narrows that to the names given, which is how a call whose other arguments are trusted is checked. A `summary` run follows local calls and stops on a cycle; `none` stays inside the root. Each report entry is the call chain and the sink site, and the same chain at the same position is reported once.
+
+```powershell
+ncm taint -r MyMod.Entry.OnLoad --sink "System.IO.File.*" --sanitizer "System.Net.WebUtility.HtmlEncode"
+ncm taint --rules taint.json --interprocedural none -o taint.txt
+ncm taint -c MyMod.Net.Handler --no-fields
+```
+
+`build --taint` runs the same analysis over every source and reports `NC0005`, and `hook` runs it over each replacement method, since a replacement receives whatever the original received.
+
+Fields and properties are tracked per object, not per symbol: every `new` gets a slot that stays the same across calls, so a field written on one instance does not mark another, and an object handed to a method carries what was written into it. A slot whose constructor took untrusted arguments counts as untrusted as a whole, since that state cannot be read back. Static fields belong to no instance and are shared by the run.
+
+Collection elements are followed loosely, the way CodeQL models element content without the index: a write method (`Add`, `Insert`, `Append`, `Write`, `Set`, `Enqueue`, `Push` and the like) marks its receiver when an argument is untrusted, and reading anything back out of that receiver — an indexer, `foreach`, `ToString` — counts as untrusted. Writing one element therefore marks the whole collection.
+
+A call through an interface or a virtual method is resolved to what can actually run there. The receiver type is known when the object came from a `new` in the same walk, which narrows the call to the one implementation; when it is unknown, every implementation in the sources is followed and their results are merged. A contract with more than 8 implementations, or a method declared on `object`, falls back to the declaration so a wide interface cannot explode the walk.
+
+### `batch`
+
+Run several tasks in one process. Each task is a complete command line without the `ncm` prefix, and `&` separates them. The project and the global config are loaded once, so repeated checks do not pay the startup cost again while every task still starts from a clean state.
+
+| Parameter | Description |
+|---|---|
+| `--continue-on-error` | Keep going after a task fails instead of stopping |
+
+An `&` inside double or single quotes belongs to the argument rather than separating tasks, and `\&` escapes one outside quotes. A task that exits non-zero stops the run with that code; with `--continue-on-error` the remaining tasks still run and the first failure is returned at the end.
+
+```powershell
+ncm batch 'taint -r MyMod.Entry.OnLoad --sink "System.IO.File.*"&callgraph --no-external'
+ncm batch --continue-on-error 'build --check-only&hook'
 ```
 
 ### `hook`

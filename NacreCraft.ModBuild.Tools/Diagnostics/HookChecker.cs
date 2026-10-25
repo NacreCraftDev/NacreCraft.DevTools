@@ -459,6 +459,8 @@ internal static class HookChecker
         if (replacement is null)
             return;
 
+        CheckTaint(compilation, replacement, rule, bag);
+
         //for these forms the method name is the anchor itself, so it has to exist before anything else can be said
         if (!Anchored(rule.Type))
             return;
@@ -475,6 +477,24 @@ internal static class HookChecker
         }
 
         CheckSignature(rule, candidates, replacement, bag);
+    }
+
+    //CheckTaint follows the replacement parameters to a dangerous api, which a signature check cannot see
+    private static void CheckTaint(Compilation compilation, IMethodSymbol replacement, HookRule rule,
+        DiagnosticBag bag)
+    {
+        if (replacement.Parameters.Length == 0)
+            return;
+
+        var options = new TaintOptions([], [], [], [], 4, true, true, true, 3, true, []);
+        foreach (var path in TaintAnalysis.CheckMethod(compilation, replacement, options).Take(3))
+        {
+            var span = path.Sink.GetLineSpan();
+            var location = $"{Path.GetFileName(span.Path)}:{span.StartLinePosition.Line + 1}";
+            Report(DiagnosticSeverity.Warning,
+                $"the replacement can pass its parameters to {path.Text}", rule, bag,
+                note: $"path: {path.Chain} ({location})");
+        }
     }
 
     //CheckSignature compares the replacement method with what the form hands it

@@ -4,15 +4,11 @@ using NacreCraft.ModBuild.Diagnostics;
 
 namespace NacreCraft.ModBuild.Tools;
 
-//CallGraphRender turns a CallGraph into text: the indented list, the top down organisation tree, or the plain report
+//CallGraphRender turns a CallGraph into text: the indented list or the plain report
 //Colours are ansi escapes so one line can mix several tones; a file output and a redirected console keep plain text
 internal static class CallGraphRender
 {
-    //Space between two sibling subtrees in the organisation tree
-    private const int Gap = 3;
-
     //Hard limits keep a very wide or deep graph inside a bounded canvas and stack
-    private const int MaxWidth = 200;
     private const int MaxDepth = 256;
     private const int MaxNodes = 20000;
 
@@ -20,7 +16,7 @@ internal static class CallGraphRender
 
     //Render builds the whole report and returns it with or without ansi colours
     public static string Render(CallGraph graph, IReadOnlyList<CallGraph.Node> entries, string rootDirectory, int depth,
-        bool external, bool cycles, bool tree, bool color)
+        bool external, bool cycles, bool color)
     {
         var report = new Report();
         var nodes = graph.Nodes();
@@ -44,11 +40,7 @@ internal static class CallGraphRender
         var expanded = new HashSet<IMethodSymbol>(SymbolEqualityComparer.Default);
         foreach (var entry in entries)
         {
-            if (tree)
-                Tree(graph, entry, rootDirectory, depth, external, expanded, report);
-            else
-                Flat(graph, entry, rootDirectory, depth, external, expanded, report);
-
+            Flat(graph, entry, rootDirectory, depth, external, expanded, report);
             report.Blank();
         }
 
@@ -72,7 +64,7 @@ internal static class CallGraphRender
         return report.Render(color);
     }
 
-    //Label names a method with the file it is declared in, which a tree of same named methods needs
+    //Label names a method with the file it is declared in, which tells apart methods with the same name
     public static string Label(IMethodSymbol method, string rootDirectory)
     {
         var name = CallGraph.Name(method);
@@ -136,75 +128,6 @@ internal static class CallGraphRender
         }
     }
 
-    //Tree draws one entry as a top down organisation tree, root on top and every branch on its own row
-    private static void Tree(CallGraph graph, CallGraph.Node entry, string rootDirectory, int limit, bool external,
-        HashSet<IMethodSymbol> expanded, Report report)
-    {
-        var label = new List<Segment>();
-        AddLabel(label, entry.Method, rootDirectory, Tone.Entry);
-        label.Add(new Segment(" [entry]", Tone.Entry));
-
-        expanded.Add(entry.Method);
-        var stack = new HashSet<IMethodSymbol>(SymbolEqualityComparer.Default) { entry.Method };
-        var budget = MaxNodes;
-        var root = Build(graph, entry.Method, label, rootDirectory, Guard(limit), external, stack, expanded,
-            ref budget, 0);
-        Measure(root);
-
-        //a wide graph is shown from its middle, since the full canvas would be mostly empty on both ends
-        var width = Math.Min(root.Width, MaxWidth);
-        var offset = root.Width > MaxWidth ? (root.Width - MaxWidth) / 2 : 0;
-
-        var canvas = new List<Cell[]>();
-        Place(root, -offset, 0, width, canvas);
-        foreach (var row in canvas)
-        {
-            var cells = Cells(row).ToList();
-            if (cells.Count > 0)
-                report.Add(cells);
-        }
-
-        if (budget <= 0)
-            report.Add(new Segment($"  ... node limit {MaxNodes} reached", Tone.Dim));
-    }
-
-    //Build turns one method and its calls into a box tree, ending a branch on an external call, a cycle or the limit
-    private static Box Build(CallGraph graph, IMethodSymbol method, List<Segment> label, string rootDirectory, int limit,
-        bool external, HashSet<IMethodSymbol> stack, HashSet<IMethodSymbol> expanded, ref int budget, int depth)
-    {
-        var box = new Box { Label = label };
-        if (limit > 0 && depth >= limit)
-            return box;
-
-        var node = graph.NodeOf(method);
-        if (node is null)
-            return box;
-
-        stack.Add(method);
-        foreach (var branch in Groups(node, external))
-        {
-            if (budget-- <= 0)
-                break;
-
-            var (parts, expand) = Describe(branch, rootDirectory, limit, stack, expanded, depth);
-            if (!expand)
-            {
-                box.Children.Add(new Box { Label = parts });
-                continue;
-            }
-
-            var child = graph.NodeOf(branch.Target);
-            if (child is not null && child.Outgoing.Count > 0)
-                expanded.Add(branch.Target);
-
-            box.Children.Add(Build(graph, branch.Target, parts, rootDirectory, limit, external, stack, expanded,
-                ref budget, depth + 1));
-        }
-
-        stack.Remove(method);
-        return box;
-    }
-
     //Guard keeps a caller supplied depth inside the hard limit
     private static int Guard(int limit)
         => limit > 0 ? Math.Min(limit, MaxDepth) : MaxDepth;
@@ -227,7 +150,7 @@ internal static class CallGraphRender
         if (stack.Contains(branch.Target))
         {
             AddLabel(parts, branch.Target, rootDirectory, Tone.Cycle, branch.Count);
-            parts.Add(new Segment(" [cycle]", Tone.Cycle));
+            parts.Add(new Segment(" [recursive]", Tone.Cycle));
             return (parts, false);
         }
 
@@ -323,126 +246,6 @@ internal static class CallGraphRender
     private static string Trim(string text)
         => text.Length <= 48 ? text : text[..45] + "...";
 
-    //Measure gives every subtree the width its widest row needs
-    private static int Measure(Box box)
-    {
-        if (box.Children.Count == 0)
-            return box.Width = box.LabelWidth;
-
-        var total = 0;
-        foreach (var child in box.Children)
-            total += Measure(child);
-
-        total += Gap * (box.Children.Count - 1);
-        return box.Width = Math.Max(box.LabelWidth, total);
-    }
-
-    //Place writes one subtree into a character canvas, the label on its own row and the connector between rows
-    private static void Place(Box box, int left, int row, int width, List<Cell[]> canvas)
-    {
-        box.Center = left + box.Width / 2;
-        var line = Row(canvas, row, width);
-        var column = box.Center - box.LabelWidth / 2;
-        foreach (var segment in box.Label)
-        {
-            foreach (var character in segment.Text)
-            {
-                if (column >= 0 && column < line.Length)
-                    line[column] = new Cell(character, segment.Tone);
-
-                column++;
-            }
-        }
-
-        if (box.Children.Count == 0)
-            return;
-
-        var total = box.Children.Sum(child => child.Width) + Gap * (box.Children.Count - 1);
-        var childLeft = left + (box.Width - total) / 2;
-        foreach (var child in box.Children)
-        {
-            Place(child, childLeft, row + 2, width, canvas);
-            childLeft += child.Width + Gap;
-        }
-
-        Connector(box, row + 1, width, canvas);
-    }
-
-    //Connector draws the row between a parent and its children
-    private static void Connector(Box box, int row, int width, List<Cell[]> canvas)
-    {
-        var line = Row(canvas, row, width);
-        if (box.Children.Count == 1)
-        {
-            if (box.Center >= 0 && box.Center < line.Length)
-                line[box.Center] = new Cell('│', Tone.Dim);
-
-            return;
-        }
-
-        var first = box.Children[0].Center;
-        var last = box.Children[^1].Center;
-
-        for (var column = first; column <= last; column++)
-        {
-            if (column >= 0 && column < line.Length)
-                line[column] = new Cell('─', Tone.Dim);
-        }
-
-        foreach (var child in box.Children)
-        {
-            if (child.Center >= 0 && child.Center < line.Length)
-                line[child.Center] = new Cell('┬', Tone.Dim);
-        }
-
-        if (first >= 0 && first < line.Length)
-            line[first] = new Cell('┌', Tone.Dim);
-
-        if (last >= 0 && last < line.Length)
-            line[last] = new Cell('┐', Tone.Dim);
-
-        if (box.Center < 0 || box.Center >= line.Length)
-            return;
-
-        line[box.Center] = line[box.Center].Ch switch
-        {
-            '┬' => new Cell('┼', Tone.Dim),
-            '┌' => new Cell('├', Tone.Dim),
-            '┐' => new Cell('┤', Tone.Dim),
-            _ => new Cell('┴', Tone.Dim),
-        };
-    }
-
-    private static Cell[] Row(List<Cell[]> canvas, int row, int width)
-    {
-        while (canvas.Count <= row)
-            canvas.Add(Enumerable.Repeat(new Cell(' ', Tone.Plain), width).ToArray());
-
-        return canvas[row];
-    }
-
-    //Cells turns one canvas row into segments, merging hints of the same tone and dropping trailing space
-    private static IEnumerable<Segment> Cells(Cell[] row)
-    {
-        var last = row.Length - 1;
-        while (last >= 0 && row[last].Ch == ' ')
-            last--;
-
-        var column = 0;
-        while (column <= last)
-        {
-            var tone = row[column].Tone;
-            var text = new StringBuilder();
-            while (column <= last && row[column].Tone == tone)
-            {
-                text.Append(row[column].Ch);
-                column++;
-            }
-
-            yield return new Segment(text.ToString(), tone);
-        }
-    }
-
     private static string Relative(string root, string path)
         => Path.GetRelativePath(root, path).Replace('\\', '/');
 
@@ -468,21 +271,6 @@ internal static class CallGraphRender
     }
 
     private readonly record struct Segment(string Text, Tone Tone = Tone.Plain);
-
-    private readonly record struct Cell(char Ch, Tone Tone);
-
-    private sealed class Box
-    {
-        public required List<Segment> Label { get; init; }
-
-        public List<Box> Children { get; } = new();
-
-        public int Width { get; set; }
-
-        public int Center { get; set; }
-
-        public int LabelWidth => Label.Sum(segment => segment.Text.Length);
-    }
 
     private sealed class Report
     {

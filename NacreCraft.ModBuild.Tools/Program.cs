@@ -30,6 +30,13 @@ public static class Program
         //`help <tool>` shows that tool's arguments, bare `help` shows the full list
         if (args[0] is "help" or "--help" or "-h")
         {
+            //`help all` prints every tool's help as if each one had been asked for by name
+            if (args.Length > 1 && string.Equals(args[1], "all", StringComparison.OrdinalIgnoreCase))
+            {
+                Help.PrintAll(Console.Out);
+                return 0;
+            }
+
             if (args.Length > 1)
                 return Help.PrintTool(Console.Out, args[1]);
 
@@ -50,7 +57,7 @@ public static class Program
     }
 
     //Resolves work by name, with project tasks first, then the global ones and finally the built-in tools
-    private static int Dispatch(string name, string[] rest, NcProject? project, NcProject? global)
+    internal static int Dispatch(string name, string[] rest, NcProject? project, NcProject? global)
     {
         //a bootstrap exposes the tasks of its projects as <bootstrap>/<task>, run in the owning project
         if (project is { Bootstrap: true } && project.FindScopedTask(name) is { } scoped)

@@ -23,7 +23,21 @@ public static class Help
         WriteGlobalTasks(writer);
 
         writer.WriteLine();
-        writer.WriteLine("Run 'ncm help <tool>' to see the parameters of one tool.");
+        writer.WriteLine("Run 'ncm help <tool>' to see the parameters of one tool, or 'ncm help all' for every tool.");
+    }
+
+    //PrintAll every registered tool's full help, the same text as running ncm help <tool> one by one
+    public static void PrintAll(TextWriter writer)
+    {
+        var first = true;
+        foreach (var tool in ToolRegistry.All)
+        {
+            if (!first)
+                writer.WriteLine();
+
+            first = false;
+            PrintTool(writer, tool.Name);
+        }
     }
 
     //Report an unrecognized name in red, adding a suggestion when a close match exists

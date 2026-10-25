@@ -109,6 +109,8 @@ public static class CSharpAnalyzer
         RunPolicyChecks(project.Compilation, sourcePaths, root, cache, bag);
         if (options.Lint)
             RunLint(project.Compilation, sourcePaths, root, cache, bag);
+        if (options.Taint)
+            RunTaint(project.Compilation, sourcePaths, root, cache, bag);
         Trace.Log($"Roslyn reported {reported} error(s)");
         return project;
     }
@@ -246,6 +248,40 @@ public static class CSharpAnalyzer
 
         public System.Reflection.Assembly LoadFromPath(string fullPath)
             => System.Reflection.Assembly.LoadFrom(fullPath);
+    }
+
+    //RunTaint reports inputs that reach a memory safety api, the semantic half the pattern check cannot see
+    private static void RunTaint(Compilation compilation, HashSet<string> sourcePaths, string root,
+        Dictionary<string, string[]> cache, DiagnosticBag bag)
+    {
+        var options = new TaintOptions([], [], [], [], 8, true, true, true, 100, true, []);
+        var paths = TaintAnalysis.Analyze(compilation, sourcePaths, options, out var error);
+        if (error.Length > 0)
+        {
+            Console.WriteLine($"warning: taint check skipped: {error}");
+            return;
+        }
+
+        foreach (var path in paths)
+        {
+            var span = path.Sink.GetLineSpan();
+            if (string.IsNullOrEmpty(span.Path) || !sourcePaths.Contains(span.Path))
+                continue;
+
+            var line = span.StartLinePosition.Line + 1;
+            bag.Add(new Diagnostic(
+                DiagnosticSeverity.Warning,
+                "NC0005",
+                $"untrusted input reaches {path.Text}",
+                Path.GetRelativePath(root, span.Path).Replace('\\', '/'),
+                line,
+                span.StartLinePosition.Character + 1,
+                1,
+                LineOf(cache, span.Path, line),
+                $"path: {path.Chain}",
+                string.Empty,
+                []));
+        }
     }
 
     //PartialCauses the errors that show up when the parts of one type land in different namespaces

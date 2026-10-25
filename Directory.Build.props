@@ -18,9 +18,9 @@
     <Copyright>Copyright (c) NacreCraft Contributors</Copyright>
 
     <!-- ncm and the project template share this version, so bump it here on release -->
-    <VersionPrefix>1.7.0</VersionPrefix>
-    <AssemblyVersion>1.7.0.0</AssemblyVersion>
-    <FileVersion>1.7.0.0</FileVersion>
+    <VersionPrefix>1.9.10</VersionPrefix>
+    <AssemblyVersion>1.9.10.0</AssemblyVersion>
+    <FileVersion>1.9.10.0</FileVersion>
   </PropertyGroup>
 
 </Project>

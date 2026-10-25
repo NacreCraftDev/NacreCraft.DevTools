@@ -29,6 +29,7 @@ internal static class BuildTool
             new("--check-only", "Run the api and syntax checks only, build nothing"),
             new("--no-manifest", "Skip the ncmod.json lookup, treat the current directory as a plain C# project (must contain a csproj)"),
             new("--lint", "Run the Roslynator code quality rules in addition to the api and syntax checks"),
+            new("--taint", "Follow untrusted input to dangerous apis after the regular checks"),
         ]);
 
     //Run parses the arguments, diagnoses, builds and collects the output
@@ -40,6 +41,7 @@ internal static class BuildTool
         var checkOnly = false;
         var noManifest = false;
         var lint = false;
+        var taint = false;
 
         for (var index = 0; index < args.Length; index++)
         {
@@ -66,9 +68,12 @@ internal static class BuildTool
                 case "--lint":
                     lint = true;
                     break;
+                case "--taint":
+                    taint = true;
+                    break;
                 default:
                     Console.WriteLine($"error: unknown build option {args[index]}");
-                    Console.WriteLine("Usage: ncm build [-c|--configuration <name>] [--no-check] [--check-only] [--no-manifest] [--lint]");
+                    Console.WriteLine("Usage: ncm build [-c|--configuration <name>] [--no-check] [--check-only] [--no-manifest] [--lint] [--taint]");
                     return 1;
             }
         }
@@ -127,7 +132,7 @@ internal static class BuildTool
             return 1;
 
         ProjectCompilation? compiled = null;
-        if (check && !RunChecks(root, config, project, lint, out compiled))
+        if (check && !RunChecks(root, config, project, lint, taint, out compiled))
             return 1;
 
         //Check-only stops here and leaves no build output
@@ -236,7 +241,7 @@ internal static class BuildTool
     //RunChecks runs the api usage, C# syntax and injection checks before building
     //Compile settings follow the project config so a passing check does not fail later on a different language version
     //The compilation it already built is handed back, since the build emits the very same trees
-    private static bool RunChecks(string root, NcProject? config, ModProject? manifest, bool lint,
+    private static bool RunChecks(string root, NcProject? config, ModProject? manifest, bool lint, bool taint,
         out ProjectCompilation? compiled)
     {
         compiled = null;
@@ -252,8 +257,8 @@ internal static class BuildTool
             covered = ModApiAnalyzer.Analyze(root, catalog, bag);
 
         var options = config is null
-            ? CompileOptions.Default with { Lint = lint }
-            : CompileOptions.From(config, config.AssemblyNameOf(root), lint);
+            ? CompileOptions.Default with { Lint = lint, Taint = taint }
+            : CompileOptions.From(config, config.AssemblyNameOf(root), lint, taint);
         var project = CSharpAnalyzer.Analyze(root, options, bag, covered);
         compiled = project;
 

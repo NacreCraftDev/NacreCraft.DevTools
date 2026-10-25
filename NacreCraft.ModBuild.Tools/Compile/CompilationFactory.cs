@@ -10,15 +10,16 @@ using NacreCraft.ModBuild.Diagnostics;
 namespace NacreCraft.ModBuild.Compile;
 
 public sealed record CompileOptions(string AssemblyName, string LangVersion, bool Nullable, bool ImplicitUsings,
-    string DefineConstants, OutputKind OutputKind, bool AllowUnsafe, bool Lint)
+    string DefineConstants, OutputKind OutputKind, bool AllowUnsafe, bool Lint, bool Taint)
 {
     //Matches the template project's defaults and is used when only checking
     public static CompileOptions Default { get; } =
         new("ncm-project", NcCheck.DefaultLangVersion, true, true, string.Empty,
-            OutputKind.DynamicallyLinkedLibrary, NcBuild.DefaultAllowUnsafe, false);
+            OutputKind.DynamicallyLinkedLibrary, NcBuild.DefaultAllowUnsafe, false, false);
 
     //Builds options from the project config, with fallbackName covering a missing assembly name
-    public static CompileOptions From(NcProject project, string? fallbackName = null, bool lint = false)
+    public static CompileOptions From(NcProject project, string? fallbackName = null, bool lint = false,
+        bool taint = false)
         => new(
             string.IsNullOrWhiteSpace(project.Build.AssemblyName)
                 ? fallbackName ?? "ncm-project"
@@ -31,7 +32,8 @@ public sealed record CompileOptions(string AssemblyName, string LangVersion, boo
                 ? OutputKind.ConsoleApplication
                 : OutputKind.DynamicallyLinkedLibrary,
             project.Build.AllowUnsafe,
-            lint);
+            lint,
+            taint);
 }
 
 public sealed class ProjectCompilation

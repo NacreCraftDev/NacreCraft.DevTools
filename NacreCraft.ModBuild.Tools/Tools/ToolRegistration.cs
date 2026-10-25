@@ -16,6 +16,9 @@ public static class ToolRegistration
         AsmTool.Register();
         HookTool.Register();
         CallGraphTool.Register();
+        FlowTool.Register();
+        TaintTool.Register();
+        BatchTool.Register();
         RunServerTool.Register();
         RunClientTool.Register();
         UpgradeTool.Register();

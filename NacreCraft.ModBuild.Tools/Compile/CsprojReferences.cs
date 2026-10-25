@@ -19,16 +19,74 @@ internal static class CsprojReferences
     //Empty when there is no csproj or the engine is unavailable, which leaves the caller with framework references only
     public static IReadOnlyList<string> Assemblies(string root)
     {
-        var project = Directory.EnumerateFiles(root, "*.csproj").FirstOrDefault();
-        if (project is null)
+        var projects = Projects(root);
+        if (projects.Count == 0)
             return [];
 
+        if (projects.Count == 1)
+            return Cached(projects[0]);
+
+        //a solution root holds one project per directory, and the compilation already carries every source file,
+        //so their own outputs are left out and only the references from outside the solution are merged in
+        var merged = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var project in projects)
+        {
+            foreach (var path in Cached(project))
+            {
+                if (!IsOwnOutput(root, path) && seen.Add(path))
+                    merged.Add(path);
+            }
+        }
+
+        return merged;
+    }
+
+    //Projects lists the csproj files of the project at root, descending only when the root itself has none
+    private static List<string> Projects(string root)
+    {
+        var top = Directory.EnumerateFiles(root, "*.csproj").ToList();
+        if (top.Count > 0)
+            return top;
+
+        return Directory.EnumerateFiles(root, "*.csproj", SearchOption.AllDirectories)
+            .Where(path => !IsBuildPath(root, path))
+            .ToList();
+    }
+
+    //Cached resolves one project once per run, since check and build both ask for the same references
+    private static IReadOnlyList<string> Cached(string project)
+    {
         if (Cache.TryGetValue(project, out var cached))
             return cached;
 
         var resolved = Resolve(project);
         Cache[project] = resolved;
         return resolved;
+    }
+
+    //IsBuildPath whether a csproj sits under an output folder that must not contribute references
+    private static bool IsBuildPath(string root, string path)
+    {
+        var relative = Path.GetRelativePath(root, path);
+        var parts = relative.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+            StringSplitOptions.RemoveEmptyEntries);
+        return parts.Any(part => part.Equals("bin", StringComparison.OrdinalIgnoreCase)
+            || part.Equals("obj", StringComparison.OrdinalIgnoreCase)
+            || part.Equals("Build", StringComparison.OrdinalIgnoreCase));
+    }
+
+    //IsOwnOutput whether a reference is one of the solution's own build products, which the source scan already covers
+    private static bool IsOwnOutput(string root, string path)
+    {
+        var relative = Path.GetRelativePath(root, path);
+        if (relative.StartsWith("..", StringComparison.Ordinal))
+            return false;
+
+        var parts = relative.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+            StringSplitOptions.RemoveEmptyEntries);
+        return parts.Any(part => part.Equals("bin", StringComparison.OrdinalIgnoreCase)
+            || part.Equals("obj", StringComparison.OrdinalIgnoreCase));
     }
 
     //Runs ResolveReferences once and collects the ReferencePath items
