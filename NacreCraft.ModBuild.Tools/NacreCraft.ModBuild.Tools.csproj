@@ -28,15 +28,65 @@
   </ItemGroup>
 
   <!--
-    The engine resolves these assemblies by name from the local SDK, so a NuGet copy
-    left in the output folder wins first and mismatches the SDK, breaking the resolvers
-    and targets; delete it after build.
+    The msbuild engine and the .NET sdk props and targets are bundled so package targets run on a machine without any
+    sdk installed. Everything comes from the sdk this build uses, which keeps the engine, the tasks and the targets on
+    one version instead of mixing a nuget copy with whatever sdk the user happens to have.
+    The sdk folder is large, but the alternative is a machine without an sdk silently skipping every package target.
+    The files are listed once here and copied twice: beside the built tool for development, and into the publish folder
+    that dotnet pack collects a tool package from.
   -->
-  <Target Name="DropMsBuildRuntime" AfterTargets="Build">
-    <ItemGroup>
-      <MsBuildRuntimeFile Include="$(OutputPath)Microsoft.Build*.dll;$(OutputPath)Microsoft.NET.StringTools.dll" />
-    </ItemGroup>
-    <Delete Files="@(MsBuildRuntimeFile)" />
+  <ItemGroup>
+    <MsBuildBundle Include="$(MSBuildBinPath)\MSBuild.dll" />
+    <MsBuildBundle Include="$(MSBuildBinPath)\Microsoft.Build.dll" />
+    <MsBuildBundle Include="$(MSBuildBinPath)\Microsoft.Build.Framework.dll" />
+    <MsBuildBundle Include="$(MSBuildBinPath)\Microsoft.Build.Utilities.Core.dll" />
+    <MsBuildBundle Include="$(MSBuildBinPath)\Microsoft.Build.Tasks.Core.dll" />
+    <MsBuildBundle Include="$(MSBuildBinPath)\Microsoft.NET.StringTools.dll" />
+    <!--WriteCodeFragment turns the assembly attributes into source, and it builds that snippet through CodeDom-->
+    <MsBuildBundle Include="$(MSBuildBinPath)\System.CodeDom.dll" />
+    <!--Microsoft.Common.props and the language targets resolve through the extensions path, which points here-->
+    <MsBuildBundle Include="$(MSBuildBinPath)\*.props" />
+    <MsBuildBundle Include="$(MSBuildBinPath)\*.targets" />
+    <!--the .NET sdk tasks read the nuget graph, and these sit beside the engine in an sdk install-->
+    <MsBuildBundle Include="$(MSBuildBinPath)\NuGet*.dll" />
+    <!--the built-in tasks are registered from these two files, which carry no extension-->
+    <MsBuildBundle Include="$(MSBuildBinPath)\Microsoft.Common.tasks" />
+    <MsBuildBundle Include="$(MSBuildBinPath)\Microsoft.Common.overridetasks" />
+    <!--ResolveAppHosts reads the rid graph from the engine root, so a resolve without them throws-->
+    <MsBuildBundle Include="$(MSBuildBinPath)\PortableRuntimeIdentifierGraph.json" />
+    <MsBuildBundle Include="$(MSBuildBinPath)\RuntimeIdentifierGraph.json" />
+    <MsBuildCurrentBundle Include="$(MSBuildBinPath)\Current\**\*" />
+    <!--the whole Sdks folder, since the sdk targets import helpers such as SourceLink and Razor through relative paths-->
+    <MsBuildSdk Include="$(MSBuildBinPath)\Sdks\**\*" />
+    <!--the sdk targets reach the language targets through ../../../Roslyn, and the reference resolve walks on into
+        assembly info generation, which ends in csc; the whole folder keeps that chain working-->
+    <MsBuildRoslyn Include="$(MSBuildBinPath)\Roslyn\**\*" />
+  </ItemGroup>
+
+  <Target Name="BundleMsBuild" AfterTargets="Build">
+    <Copy SourceFiles="@(MsBuildBundle)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(MsBuildCurrentBundle)"
+          DestinationFiles="@(MsBuildCurrentBundle->'$(OutputPath)Current\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(MsBuildSdk)"
+          DestinationFiles="@(MsBuildSdk->'$(OutputPath)Sdks\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(MsBuildRoslyn)"
+          DestinationFiles="@(MsBuildRoslyn->'$(OutputPath)Roslyn\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="BundleMsBuildToPublish" AfterTargets="Publish">
+    <Copy SourceFiles="@(MsBuildBundle)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(MsBuildCurrentBundle)"
+          DestinationFiles="@(MsBuildCurrentBundle->'$(PublishDir)Current\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(MsBuildSdk)"
+          DestinationFiles="@(MsBuildSdk->'$(PublishDir)Sdks\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(MsBuildRoslyn)"
+          DestinationFiles="@(MsBuildRoslyn->'$(PublishDir)Roslyn\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
   </Target>
 
   <ItemGroup>
@@ -88,6 +138,8 @@
   <ItemGroup>
     <!--The language server reuses the inspection code rather than keeping a second copy of it-->
     <InternalsVisibleTo Include="NacreCraft.NcMod.LangServer" />
+    <!--The experimental command line reuses dispatch and task running rather than copying them-->
+    <InternalsVisibleTo Include="NacreCraft.ModBuild.Tools.Experimental" />
   </ItemGroup>
 
   <!--Pack the project template into the assembly, so init does not depend on dotnet new or a machine wide install-->

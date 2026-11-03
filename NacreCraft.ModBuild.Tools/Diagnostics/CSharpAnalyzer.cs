@@ -10,6 +10,7 @@ using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Text;
 using NacreCraft.ModBuild.Compile;
 using NacreCraft.ModBuild.Core;
+using NacreCraft.ModBuild.Tools;
 //Roslyn's Diagnostic collides with the local one in this namespace, so alias it
 using RoslynDiagnostic = Microsoft.CodeAnalysis.Diagnostic;
 
@@ -39,10 +40,16 @@ public static class CSharpAnalyzer
 
     //Analyze compiles the project sources and collects errors into bag, skipping identifiers the catalog pass already reported
     //The compilation is handed back so the injection pass can read the same trees instead of assembling them again
+    //configuration picks the output directory of the referenced projects a plain csproj compiles against
     public static ProjectCompilation? Analyze(string root, CompileOptions options, DiagnosticBag bag,
-        IReadOnlySet<string> covered)
+        IReadOnlySet<string> covered, string configuration = "Debug")
     {
-        var project = CompilationFactory.Create(root, options, out var failure);
+        Progress.Enter("check", 1, "loading sources");
+        var project = CompilationFactory.Create(root, options, out var failure, (done, total, file) =>
+        {
+            Progress.Resize(total);
+            Progress.Step(Path.GetRelativePath(root, file).Replace('\\', '/'));
+        }, Progress.Detail, configuration);
         if (project is null)
         {
             Trace.Log($"skipping the Roslyn check: {failure}");
@@ -56,11 +63,18 @@ public static class CSharpAnalyzer
         var namespaces = new Dictionary<string, List<string>>(StringComparer.Ordinal);
         var reported = 0;
 
-        foreach (var diagnostic in project.Compilation.GetDiagnostics())
+        Progress.Resize(Math.Max(1, project.Sources.Count));
+
+        //binding every tree is the slow part a large project sits in, so it gets a name of its own
+        Progress.Detail("binding sources");
+        var errors = project.Compilation.GetDiagnostics()
+            .Where(diagnostic => diagnostic.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error)
+            .ToList();
+        Progress.Enter("advice", Math.Max(1, errors.Count), errors.Count == 0 ? "no errors" : string.Empty);
+
+        foreach (var diagnostic in errors)
         {
-            //only errors are reported; warnings belong to the real build, which would otherwise flood the screen with suggestions
-            if (diagnostic.Severity != Microsoft.CodeAnalysis.DiagnosticSeverity.Error)
-                continue;
+            Progress.Step($"{diagnostic.Id} {Path.GetFileName(diagnostic.Location.SourceTree?.FilePath ?? string.Empty)}");
 
             var span = diagnostic.Location.GetLineSpan();
             //trees from a generator are not project sources, so errors they report are dropped
@@ -93,7 +107,7 @@ public static class CSharpAnalyzer
             bag.Add(new Diagnostic(
                 DiagnosticSeverity.Error,
                 diagnostic.Id,
-                diagnostic.GetMessage(CultureInfo.InvariantCulture),
+                MessageOf(diagnostic, fixes),
                 Path.GetRelativePath(root, span.Path).Replace('\\', '/'),
                 line,
                 span.StartLinePosition.Character + 1,
@@ -106,13 +120,65 @@ public static class CSharpAnalyzer
             reported++;
         }
 
+        Progress.Detail("policy checks");
         RunPolicyChecks(project.Compilation, sourcePaths, root, cache, bag);
+        RunAnalyzers(project.Compilation, options, root, sourcePaths, cache, bag);
         if (options.Lint)
             RunLint(project.Compilation, sourcePaths, root, cache, bag);
         if (options.Taint)
             RunTaint(project.Compilation, sourcePaths, root, cache, bag);
         Trace.Log($"Roslyn reported {reported} error(s)");
+        Progress.Complete();
         return project;
+    }
+
+    //RunAnalyzers runs the analyzers the sdk and the packages ship, which is where the CA rules come from
+    //Only diagnostics that block a real build are taken, so a suppressed or hidden rule stays out of the report
+    private static void RunAnalyzers(Compilation compilation, CompileOptions options, string root,
+        HashSet<string> sourcePaths, Dictionary<string, string[]> cache, DiagnosticBag bag)
+    {
+        var analyzers = AnalyzerSuite.AnalyzersOf(root, options);
+        if (analyzers.Count == 0)
+            return;
+
+        Progress.Detail("analyzers");
+        var diagnostics = compilation.WithAnalyzers(ImmutableArray.CreateRange(analyzers))
+            .GetAnalyzerDiagnosticsAsync().GetAwaiter().GetResult();
+        Trace.Log($"{analyzers.Count} analyzer(s) reported {diagnostics.Length} diagnostic(s)");
+
+        foreach (var diagnostic in diagnostics)
+        {
+            var severity = diagnostic.Severity switch
+            {
+                Microsoft.CodeAnalysis.DiagnosticSeverity.Error => DiagnosticSeverity.Error,
+                Microsoft.CodeAnalysis.DiagnosticSeverity.Warning => DiagnosticSeverity.Warning,
+                //style rules only reach the build when the project asks for it
+                _ when options.EnforceCodeStyleInBuild && diagnostic.Id.StartsWith("IDE", StringComparison.Ordinal)
+                    => DiagnosticSeverity.Warning,
+                _ => (DiagnosticSeverity?)null,
+            };
+
+            if (severity is not { } mapped)
+                continue;
+
+            var span = diagnostic.Location.GetLineSpan();
+            if (string.IsNullOrEmpty(span.Path) || !sourcePaths.Contains(span.Path))
+                continue;
+
+            var line = span.StartLinePosition.Line + 1;
+            bag.Add(new Diagnostic(
+                mapped,
+                diagnostic.Id,
+                diagnostic.GetMessage(CultureInfo.InvariantCulture),
+                Path.GetRelativePath(root, span.Path).Replace('\\', '/'),
+                line,
+                span.StartLinePosition.Character + 1,
+                Math.Max(1, diagnostic.Location.SourceSpan.Length),
+                LineOf(cache, span.Path, line),
+                string.Empty,
+                diagnostic.Descriptor.HelpLinkUri,
+                []));
+        }
     }
 
     //PolicyChecks the analyzers that run over the bound compilation
@@ -255,7 +321,7 @@ public static class CSharpAnalyzer
         Dictionary<string, string[]> cache, DiagnosticBag bag)
     {
         var options = new TaintOptions([], [], [], [], 8, true, true, true, 100, true, []);
-        var paths = TaintAnalysis.Analyze(compilation, sourcePaths, options, out var error);
+        var paths = TaintAnalysis.Analyze(compilation, sourcePaths, options, out var error, out _);
         if (error.Length > 0)
         {
             Console.WriteLine($"warning: taint check skipped: {error}");
@@ -345,6 +411,27 @@ public static class CSharpAnalyzer
         return true;
     }
 
+    //ExtensionNoise matches the extension method clause the compiler appends to every missing member
+    //a member error is not about extensions, and the clause names no extension method in the first place
+    private static readonly Regex ExtensionNoise = new(
+        @" and no accessible extension method '[^']*' accepting a first argument of type '[^']*' could be found",
+        RegexOptions.Compiled);
+
+    //MessageOf prefers a wording that agrees with the advice over the compiler's template
+    //the compiler says a field has no definition when it is called with parentheses, which reads as a contradiction
+    //once the advice states the field is right there
+    internal static string MessageOf(RoslynDiagnostic diagnostic, IReadOnlyList<Suggestion> fixes)
+    {
+        foreach (var fix in fixes)
+        {
+            if (fix.DiagnosticMessage is not null)
+                return fix.DiagnosticMessage;
+        }
+
+        var message = diagnostic.GetMessage(CultureInfo.InvariantCulture);
+        return diagnostic.Id == "CS1061" ? ExtensionNoise.Replace(message, string.Empty) : message;
+    }
+
     //Fixes computes the advice for one error: the symbol based suggestion when there is one and the static table otherwise
     //the reference compile path uses this too, so a referenced project is advised the same way as the project being built
     //namespaces memoizes the missing using candidates, which is why it is carried in rather than built per call
@@ -352,9 +439,30 @@ public static class CSharpAnalyzer
         Dictionary<string, List<string>> namespaces, string root)
     {
         var suggestion = SuggestFor(compilation, diagnostic, namespaces, root);
-        return suggestion is not null
-            ? [suggestion]
-            : CompileAdvice.Text(diagnostic.Id).Select(Suggestion.Text).ToList();
+        if (suggestion is not null)
+            return [suggestion];
+
+        var fixes = CompileAdvice.Text(diagnostic.Id).Select(text => Suggestion.Text(text)).ToList();
+
+        //Build/kernel only exists in an ncproj, so the hint is kept out of the shared table and added for that project kind alone
+        if (diagnostic.Id == "CS0246" && IsNcProject(root))
+            fixes.Add(Suggestion.Text("Confirm the assembly that declares it is referenced under Build/kernel/"));
+
+        return fixes;
+    }
+
+    //ProjectKinds memoizes whether a root holds an ncproj, since every missing type would otherwise walk the directory tree
+    private static readonly Dictionary<string, bool> ProjectKinds = new(StringComparer.OrdinalIgnoreCase);
+
+    //IsNcProject reports whether the project at the root is a mod project, the only kind that keeps assemblies in Build/kernel
+    private static bool IsNcProject(string root)
+    {
+        if (ProjectKinds.TryGetValue(root, out var known))
+            return known;
+
+        var isProject = NcProject.TryFind(root, out _) is not null;
+        ProjectKinds[root] = isProject;
+        return isProject;
     }
 
     //SuggestFor derives one actionable fix for a compile error, or null when it cannot
@@ -371,9 +479,11 @@ public static class CSharpAnalyzer
 
         return diagnostic.Id switch
         {
-            "CS0103" or "CS0246" => SuggestName(model, compilation, diagnostic, span, namespaces),
+            "CS0103" => SuggestName(model, compilation, diagnostic, span, namespaces, false),
+            "CS0246" => SuggestName(model, compilation, diagnostic, span, namespaces, true),
             "CS0117" or "CS1061" => SuggestMember(model, compilation, diagnostic, span),
             "CS1729" => SuggestConstructor(model, compilation, diagnostic, span),
+            "CS1739" => SuggestParameters(model, diagnostic, span),
             "CS7036" or "CS1501" => SuggestOverloads(model, diagnostic, span),
             "CS0227" => UnsafeAdvice(root),
             _ => null,
@@ -397,7 +507,7 @@ public static class CSharpAnalyzer
     //a name declared in a namespace this file does not import is a missing using, and telling the user to rename it
     //to whatever symbol happens to sit nearby would send them the wrong way
     private static Suggestion? SuggestName(SemanticModel model, Compilation compilation, RoslynDiagnostic diagnostic,
-        TextSpan span, Dictionary<string, List<string>> namespaces)
+        TextSpan span, Dictionary<string, List<string>> namespaces, bool typeOnly)
     {
         var written = TextOf(diagnostic, span);
         if (string.IsNullOrEmpty(written))
@@ -416,8 +526,17 @@ public static class CSharpAnalyzer
                 return Suggestion.Text($"`{name}` is declared in {Joined(declared)}, add a using for the one you meant");
         }
 
-        var names = model.LookupSymbols(span.Start).Select(symbol => symbol.Name);
-        var candidate = Similarity.Closest(written, names);
+        //a type error can only be fixed by a type, so a nearby method or local of a similar name is not a candidate
+        //a typo keeps the first letter far more often than not, and without that rule `Nope` was rewritten to `Type`
+        //while a genuine misspelling of `Widget` still got its diff, which read as the tool picking favourites
+        var names = model.LookupSymbols(span.Start)
+            .Where(symbol => !typeOnly || symbol is INamedTypeSymbol or INamespaceSymbol)
+            .Where(symbol => !typeOnly || SameInitial(written, symbol.Name))
+            .Select(symbol => symbol.Name);
+
+        //a missing type has no way to be checked by the compiler, so only a near miss is worth naming
+        var bound = typeOnly ? Math.Max(1, written.Length / 3) : (int?)null;
+        var candidate = Similarity.Closest(written, names, bound);
         if (candidate is null)
             return null;
 
@@ -438,6 +557,12 @@ public static class CSharpAnalyzer
         return dot < 0 ? text : text[..dot];
     }
 
+    //SameInitial keeps a type guess to names starting like the one written
+    //a typo rarely changes the first letter, so this separates a real misspelling from a name that is simply absent
+    private static bool SameInitial(string written, string candidate)
+        => written.Length > 0 && candidate.Length > 0
+            && char.ToLowerInvariant(written[0]) == char.ToLowerInvariant(candidate[0]);
+
     //DeclaringNamespaces lists the namespaces holding a type of that name, nearest few only so the advice stays readable
     //looked up once per name, a project tends to trip over the same missing using across many lines
     private static List<string> DeclaringNamespaces(Compilation compilation, string name,
@@ -447,7 +572,21 @@ public static class CSharpAnalyzer
             return cached;
 
         var found = new List<string>();
-        CollectNamespaces(compilation.GlobalNamespace, name, compilation, found);
+        CollectNamespaces(compilation.Assembly.GlobalNamespace, name, compilation, found);
+
+        //the references are walked one by one so the scan can name the assembly it is reading
+        foreach (var reference in compilation.References)
+        {
+            if (found.Count >= MaxNamespaces)
+                break;
+
+            if (compilation.GetAssemblyOrModuleSymbol(reference) is not IAssemblySymbol assembly)
+                continue;
+
+            Progress.Detail(assembly.Identity.Name);
+            CollectNamespaces(assembly.GlobalNamespace, name, compilation, found);
+        }
+
         cache[name] = found;
         return found;
     }
@@ -504,6 +643,19 @@ public static class CSharpAnalyzer
         var hidden = HiddenAccessibility(compilation, type, written);
         if (hidden is not null)
             return Suggestion.Text($"`{type.Name}.{written}` is declared {hidden} and is not part of what mods can call");
+
+        //the name is really there, so the call shape is what is wrong, and listing neighbours would point elsewhere
+        var declared = type.GetMembers(written).ToList();
+        if (declared.Count > 0)
+        {
+            var kind = MemberWord(declared[0]);
+            var full = $"{type.Name}.{written}";
+            return access.Parent is InvocationExpressionSyntax
+                ? Suggestion.Text($"`{full}` is a {kind}, call it without parentheses",
+                    $"'{full}' is a {kind}, not a method")
+                : Suggestion.Text($"`{full}` is a {kind}, which does not fit this use",
+                    $"'{full}' is a {kind}");
+        }
 
         var candidate = Similarity.Closest(written, Members(type).Select(member => member.Name));
         if (candidate is not null)
@@ -693,18 +845,56 @@ public static class CSharpAnalyzer
         return Suggestion.Text($"`{named.Name}` is built as {Signatures(constructors)}");
     }
 
+    //MemberWord names what a member is, so an advice can say a field was called as a method
+    private static string MemberWord(ISymbol member) => member switch
+    {
+        IFieldSymbol => "field",
+        IPropertySymbol => "property",
+        IMethodSymbol => "method",
+        IEventSymbol => "event",
+        _ => "member",
+    };
+
+    //SuggestParameters lists the parameter names when a named argument does not match any of them
+    private static Suggestion? SuggestParameters(SemanticModel model, RoslynDiagnostic diagnostic, TextSpan span)
+    {
+        SyntaxNode? node = (SyntaxNode?)NodeAt<ObjectCreationExpressionSyntax>(diagnostic, span)
+            ?? NodeAt<InvocationExpressionSyntax>(diagnostic, span);
+        if (node is null)
+            return null;
+
+        var info = model.GetSymbolInfo(node);
+        var method = info.Symbol as IMethodSymbol
+            ?? info.CandidateSymbols.OfType<IMethodSymbol>().FirstOrDefault();
+        if (method is null || method.Parameters.Length == 0)
+            return null;
+
+        var names = string.Join(", ", method.Parameters.Select(parameter => parameter.Name));
+        var owner = method.MethodKind == MethodKind.Constructor ? method.ContainingType.Name : method.Name;
+        return Suggestion.Text($"`{owner}` takes `{names}`");
+    }
+
     //SuggestOverloads lists the real overloads when a call passes the wrong number of arguments
     private static Suggestion? SuggestOverloads(SemanticModel model, RoslynDiagnostic diagnostic, TextSpan span)
     {
-        var invocation = NodeAt<InvocationExpressionSyntax>(diagnostic, span);
-        if (invocation is null)
+        if (NodeAt<InvocationExpressionSyntax>(diagnostic, span) is { } invocation)
+        {
+            var overloads = model.GetMemberGroup(invocation.Expression).OfType<IMethodSymbol>().ToList();
+            if (overloads.Count > 0)
+                return Suggestion.Text($"`{overloads[0].Name}` is called as {Signatures(overloads)}");
+        }
+
+        //a missing constructor argument is reported the same way, but the span sits on the object creation
+        if (NodeAt<ObjectCreationExpressionSyntax>(diagnostic, span) is not { } creation)
             return null;
 
-        var overloads = model.GetMemberGroup(invocation.Expression).OfType<IMethodSymbol>().ToList();
-        if (overloads.Count == 0)
+        if (model.GetTypeInfo(creation).Type is not INamedTypeSymbol type)
             return null;
 
-        return Suggestion.Text($"`{overloads[0].Name}` is called as {Signatures(overloads)}");
+        var constructors = type.InstanceConstructors.ToList();
+        return constructors.Count == 0
+            ? null
+            : Suggestion.Text($"`{type.Name}` is called as {Signatures(constructors)}");
     }
 
     //NodeAt walks up from the reported span to the first node of the requested kind, the one the arguments belong to

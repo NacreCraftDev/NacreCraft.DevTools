@@ -1,7 +1,7 @@
 using System.Runtime.Loader;
 using System.Security.Cryptography;
 using System.Text.Json;
-using Spectre.Console;
+using NacreCraft.ModBuild.Tools;
 
 namespace NacreCraft.ModBuild.Core;
 
@@ -66,7 +66,7 @@ public static class ClientStore
         var version = Version();
         if (version is null)
         {
-            Console.WriteLine("error: cannot read the kernel version from NacreCraft.Config, pin one with <Client Version=\"...\">");
+            Progress.WriteLine("error: cannot read the kernel version from NacreCraft.Config, pin one with <Client Version=\"...\">");
             return null;
         }
 
@@ -78,7 +78,7 @@ public static class ClientStore
             return target;
         }
 
-        Console.WriteLine($"Downloading Minecraft client jar {version} to {Path.GetDirectoryName(target)}");
+        Progress.WriteLine($"Downloading Minecraft client jar {version} to {Path.GetDirectoryName(target)}");
         return Fetch(version, target) ? target : null;
     }
 
@@ -89,7 +89,7 @@ public static class ClientStore
         var version = Version();
         if (version is null)
         {
-            Console.WriteLine("error: cannot read the kernel version from NacreCraft.Config, pin one with <Client Version=\"...\">");
+            Progress.WriteLine("error: cannot read the kernel version from NacreCraft.Config, pin one with <Client Version=\"...\">");
             return null;
         }
 
@@ -100,7 +100,7 @@ public static class ClientStore
         var json = TryGet(jsonUrl, out var error);
         if (json is null)
         {
-            Console.WriteLine($"error: failed to download {jsonUrl}: {error}");
+            Progress.WriteLine($"error: failed to download {jsonUrl}: {error}");
             return null;
         }
 
@@ -110,7 +110,7 @@ public static class ClientStore
             || !index.TryGetProperty("id", out var idNode)
             || idNode.GetString() is not { Length: > 0 } id)
         {
-            Console.WriteLine($"error: version {version} has no asset index entry");
+            Progress.WriteLine($"error: version {version} has no asset index entry");
             return null;
         }
 
@@ -184,12 +184,10 @@ public static class ClientStore
         var temp = target + ".tmp";
 
         string error;
-        var ok = Transfer.Enabled
-            ? DownloadWithProgress(url, temp, version, out error)
-            : TryDownload(url, temp, static (_, _) => { }, out error);
+        var ok = DownloadTracked(url, temp, version, out error);
         if (!ok)
         {
-            Console.WriteLine($"error: failed to download {url}: {error}");
+            Progress.WriteLine($"error: failed to download {url}: {error}");
             return false;
         }
 
@@ -197,7 +195,7 @@ public static class ClientStore
         var size = entry?.Size ?? 0L;
         if (size > 0 && info.Length != size)
         {
-            Console.WriteLine($"error: client jar size mismatch, expected {size} got {info.Length}");
+            Progress.WriteLine($"error: client jar size mismatch, expected {size} got {info.Length}");
             Discard(temp);
             return false;
         }
@@ -206,7 +204,7 @@ public static class ClientStore
         var actual = Sha1(temp);
         if (sha1.Length > 0 && !string.Equals(actual, sha1, StringComparison.OrdinalIgnoreCase))
         {
-            Console.WriteLine($"error: client jar sha1 mismatch, expected {sha1} got {actual}");
+            Progress.WriteLine($"error: client jar sha1 mismatch, expected {sha1} got {actual}");
             Discard(temp);
             return false;
         }
@@ -214,7 +212,7 @@ public static class ClientStore
         //The direct URL path has no manifest so at least reject an obviously truncated download
         if (info.Length < MinJarSize)
         {
-            Console.WriteLine($"error: the downloaded jar is only {info.Length} byte(s), treating it as incomplete");
+            Progress.WriteLine($"error: the downloaded jar is only {info.Length} byte(s), treating it as incomplete");
             Discard(temp);
             return false;
         }
@@ -224,38 +222,16 @@ public static class ClientStore
         return true;
     }
 
-    //Download while drawing a byte progress bar
-    //A server that omits the total length falls back to a spinner that reports the received bytes
-    private static bool DownloadWithProgress(string url, string target, string label, out string error)
-    {
-        var ok = false;
-        var failure = string.Empty;
-        AnsiConsole.Progress()
-            .Columns(
-                new TaskDescriptionColumn(),
-                new ProgressBarColumn(),
-                new PercentageColumn(),
-                new TransferSpeedColumn())
-            .Start(context =>
-            {
-                var task = context.AddTask($"[green]{Markup.Escape(label)}[/]");
-                ok = TryDownload(url, target, (received, total) =>
-                {
-                    if (total is { } length and > 0)
-                    {
-                        task.MaxValue = length;
-                        task.Value = received;
-                        return;
-                    }
-
-                    task.IsIndeterminate = true;
-                    task.Description = $"[green]{Markup.Escape(label)}[/] {Human(received)}";
-                }, out failure);
-            });
-
-        error = failure;
-        return ok;
-    }
+    //Download while naming the received size in the running progress stage
+    //A server that omits the total length only shows what has arrived so far
+    private static bool DownloadTracked(string url, string target, string label, out string error)
+        => TryDownload(url, target, (received, total) =>
+        {
+            var size = total is { } length and > 0
+                ? $"{Human(received)}/{Human(length)}"
+                : Human(received);
+            Progress.Detail($"{label} {size}");
+        }, out error);
 
     //Stream a download through the mirror first and the original address second, retrying each a few times
     private static bool TryDownload(string url, string target, Action<long, long?> report, out string error)
@@ -330,7 +306,7 @@ public static class ClientStore
 
             if (!document.RootElement.TryGetProperty("versions", out var versions))
             {
-                Console.WriteLine("error: the version manifest has no version list");
+                Progress.WriteLine("error: the version manifest has no version list");
                 return null;
             }
 
@@ -344,11 +320,11 @@ public static class ClientStore
                 break;
             }
 
-            Console.WriteLine($"error: version {version} is not listed in the manifest");
+            Progress.WriteLine($"error: version {version} is not listed in the manifest");
             return null;
         }
 
-        Console.WriteLine($"error: failed to download the version manifest: {error}");
+        Progress.WriteLine($"error: failed to download the version manifest: {error}");
         return null;
     }
 
@@ -362,7 +338,7 @@ public static class ClientStore
         var json = TryGet(jsonUrl, out var jsonError);
         if (json is null)
         {
-            Console.WriteLine($"error: failed to download {jsonUrl}: {jsonError}");
+            Progress.WriteLine($"error: failed to download {jsonUrl}: {jsonError}");
             return null;
         }
 
@@ -373,7 +349,7 @@ public static class ClientStore
             || !client.TryGetProperty("url", out var clientUrl)
             || clientUrl.GetString() is not { Length: > 0 } address)
         {
-            Console.WriteLine($"error: version {version} has no client download entry");
+            Progress.WriteLine($"error: version {version} has no client download entry");
             return null;
         }
 

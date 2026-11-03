@@ -1,4 +1,5 @@
 using System.Xml;
+using NacreCraft.ModBuild.Tools;
 using System.Xml.Linq;
 
 namespace NacreCraft.ModBuild.Core;
@@ -19,6 +20,7 @@ public sealed class NcCheck
 }
 
 //Build settings for the project
+//Attribute names follow the msbuild properties they stand for, so a migrated csproj keeps reading the same way
 public sealed class NcBuild
 {
     //Configuration used when the config omits one
@@ -41,63 +43,166 @@ public sealed class NcBuild
 
     //Whether unsafe code is allowed when the config omits the switch
     //Off by default, since the kernel runs every mod in its own process and an unchecked pointer takes the server with it
-    public const bool DefaultAllowUnsafe = false;
+    public const bool DefaultAllowUnsafeBlocks = false;
 
-    public NcBuild(string assemblyName, string configuration, string output, string extraArgs, bool nullable,
-        bool implicitUsings, string defineConstants, string outputType, string rootNamespace, bool dependsOnModApi,
-        bool allowUnsafe)
-    {
-        AssemblyName = assemblyName;
-        Configuration = string.IsNullOrWhiteSpace(configuration) ? DefaultConfiguration : configuration;
-        Output = string.IsNullOrWhiteSpace(output) ? DefaultOutput : output;
-        ExtraArgs = extraArgs;
-        Nullable = nullable;
-        ImplicitUsings = implicitUsings;
-        DefineConstants = defineConstants;
-        OutputType = Normalized(outputType);
-        RootNamespace = rootNamespace;
-        DependsOnModApi = dependsOnModApi;
-        AllowUnsafe = allowUnsafe;
-    }
+    //Whether a package assembly the kernel already ships is left out of the mod when the config omits the switch
+    public const bool DefaultSharedDependencies = true;
+
+    //Whether the emitted code is optimized, the msbuild default for a release build
+    public const bool DefaultOptimize = true;
+
+    //Whether identical inputs produce an identical assembly
+    public const bool DefaultDeterministic = true;
+
+    //Whether a pdb is written next to the assembly
+    public const bool DefaultDebugSymbols = true;
+
+    //Whether every warning becomes an error
+    public const bool DefaultTreatWarningsAsErrors = false;
+
+    //Whether xml documentation is emitted for the public api
+    public const bool DefaultGenerateDocumentationFile = false;
+
+    //Whether generator output is written to disk for inspection
+    public const bool DefaultEmitCompilerGeneratedFiles = false;
+
+    //Whether the analyzers the sdk ships run with the build
+    public const bool DefaultEnableNETAnalyzers = true;
+
+    //Rule level used when the config omits one, matching the sdk default
+    public const string DefaultAnalysisLevel = "latest";
+
+    //Compiler warning level, which decides whether the newer warnings are reported at all
+    public const int DefaultWarningLevel = 4;
+
+    //Debug information format, keeping the msbuild names
+    public const string DefaultDebugType = "portable";
+
+    //Target platform written into the assembly header
+    public const string DefaultPlatformTarget = "AnyCPU";
+
+    public static readonly string[] DebugTypes = ["none", "portable", "embedded", "full"];
+
+    public static readonly string[] PlatformTargets =
+        ["AnyCPU", "AnyCPU32BitPreferred", "x86", "x64", "ARM", "ARM64"];
+
+    private string _configuration = DefaultConfiguration;
+    private string _output = DefaultOutput;
+    private string _outputType = DefaultOutputType;
 
     //Assembly name, empty falls back to the manifest id and then to the directory name
-    public string AssemblyName { get; }
+    public string AssemblyName { get; init; } = string.Empty;
 
     //Build configuration name
-    public string Configuration { get; }
+    public string Configuration
+    {
+        get => _configuration;
+        init => _configuration = string.IsNullOrWhiteSpace(value) ? DefaultConfiguration : value;
+    }
 
     //Output directory, relative to the project root
-    public string Output { get; }
-
-    //Extra arguments passed to the compiler invocation
-    public string ExtraArgs { get; }
-
-    //Nullable reference type checking
-    public bool Nullable { get; }
-
-    //Implicit usings
-    public bool ImplicitUsings { get; }
-
-    //Compile-time symbols, semicolon separated
-    public string DefineConstants { get; }
+    public string Output
+    {
+        get => _output;
+        init => _output = string.IsNullOrWhiteSpace(value) ? DefaultOutput : value;
+    }
 
     //Product kind, see OutputTypes
-    public string OutputType { get; }
+    public string OutputType
+    {
+        get => _outputType;
+        init => _outputType = OutputTypes.FirstOrDefault(type => string.Equals(type, value, StringComparison.OrdinalIgnoreCase))
+            ?? DefaultOutputType;
+    }
+
+    //Extra arguments passed to the compiler invocation
+    public string ExtraArgs { get; init; } = string.Empty;
+
+    //Nullable reference type checking
+    public bool Nullable { get; init; } = true;
+
+    //Implicit usings
+    public bool ImplicitUsings { get; init; } = true;
+
+    //Compile-time symbols, semicolon separated
+    public string DefineConstants { get; init; } = string.Empty;
 
     //Root namespace, empty follows the assembly name and only affects the default resource names
-    public string RootNamespace { get; }
+    public string RootNamespace { get; init; } = string.Empty;
 
     //Whether the mod api is restored as a compile reference and staged next to the mod
     //Turn it off for a pure mod that does not use the api, so ncm never pulls that assembly in
-    public bool DependsOnModApi { get; }
+    public bool DependsOnModApi { get; init; } = DefaultDependsOnModApi;
 
-    //Whether unsafe code is allowed, the equivalent of the csproj AllowUnsafeBlocks property
-    public bool AllowUnsafe { get; }
+    //Whether unsafe code is allowed
+    public bool AllowUnsafeBlocks { get; init; } = DefaultAllowUnsafeBlocks;
 
-    //Normalize an output type ignoring case, falling back to the library type
-    private static string Normalized(string value)
-        => OutputTypes.FirstOrDefault(type => string.Equals(type, value, StringComparison.OrdinalIgnoreCase))
-            ?? DefaultOutputType;
+    //Whether a package assembly the kernel already ships is left out of the mod
+    //On by default, since embedding a second copy of a shared library only risks a version mismatch at run time
+    public bool SharedDependencies { get; init; } = DefaultSharedDependencies;
+
+    //Whether the emitted code is optimized
+    public bool Optimize { get; init; } = DefaultOptimize;
+
+    //Whether arithmetic overflow throws instead of wrapping
+    public bool CheckForOverflowUnderflow { get; init; }
+
+    //Platform written into the assembly header, see PlatformTargets
+    public string PlatformTarget { get; init; } = DefaultPlatformTarget;
+
+    //Compiler warning level
+    public int WarningLevel { get; init; } = DefaultWarningLevel;
+
+    //Warning ids turned off, semicolon separated
+    public string NoWarn { get; init; } = string.Empty;
+
+    //Warning ids promoted to errors, semicolon separated
+    public string WarningsAsErrors { get; init; } = string.Empty;
+
+    //Warning ids kept as warnings even when every warning is an error, semicolon separated
+    public string WarningsNotAsErrors { get; init; } = string.Empty;
+
+    //Whether every warning becomes an error
+    public bool TreatWarningsAsErrors { get; init; } = DefaultTreatWarningsAsErrors;
+
+    //Whether identical inputs produce an identical assembly
+    public bool Deterministic { get; init; } = DefaultDeterministic;
+
+    //Source path mapping written into the pdb, so a debugger finds the source on another machine
+    public string PathMap { get; init; } = string.Empty;
+
+    //Compiler features passed as key=value pairs, semicolon separated
+    public string Features { get; init; } = string.Empty;
+
+    //Whether the analyzers shipped with the sdk run over the sources, the msbuild default
+    public bool EnableNETAnalyzers { get; init; } = DefaultEnableNETAnalyzers;
+
+    //Rule level handed to those analyzers, latest meaning the newest set the sdk ships
+    public string AnalysisLevel { get; init; } = DefaultAnalysisLevel;
+
+    //Whether IDE style diagnostics take part in the build instead of only showing in the editor
+    public bool EnforceCodeStyleInBuild { get; init; }
+
+    //Debug information format, see DebugTypes
+    public string DebugType { get; init; } = DefaultDebugType;
+
+    //Whether a pdb is written at all
+    public bool DebugSymbols { get; init; } = DefaultDebugSymbols;
+
+    //Whether xml documentation is emitted
+    public bool GenerateDocumentationFile { get; init; } = DefaultGenerateDocumentationFile;
+
+    //Where the xml documentation goes, empty putting it beside the assembly
+    public string DocumentationFile { get; init; } = string.Empty;
+
+    //Whether source generator output is written to disk
+    public bool EmitCompilerGeneratedFiles { get; init; } = DefaultEmitCompilerGeneratedFiles;
+
+    //Where generator output goes, empty using the intermediate directory
+    public string CompilerGeneratedFilesOutputPath { get; init; } = string.Empty;
+
+    //File names that are never embedded, whatever the shared switch says
+    public IReadOnlyList<string> NoEmbed { get; init; } = [];
 }
 
 //One package dependency
@@ -339,11 +444,11 @@ public sealed class NcProject
     private const string SupportedVersion = "1";
 
     private NcProject(string path, bool overrides, NcCheck check, NcBuild build,
-        IReadOnlyList<NcPackage> packages, IReadOnlyList<NcTask> tasks, NcServer server, NcClient client,
-        NcSource? sources, NcTemplate? template, IReadOnlyList<string> friends, IReadOnlyList<string> deploy,
-        IReadOnlyList<string> resources, IReadOnlyList<NcResource> embedded, IReadOnlyList<string> files,
-        IReadOnlyList<string> projects, IReadOnlyList<string> exclude, IReadOnlySet<string> declared,
-        bool allowScriptClr, bool bootstrap)
+        IReadOnlyList<NcPackage> packages, string packageSource, IReadOnlyList<NcTask> tasks, NcServer server,
+        NcClient client, NcSource? sources, NcTemplate? template, IReadOnlyList<string> friends,
+        IReadOnlyList<string> deploy, IReadOnlyList<string> resources, IReadOnlyList<NcResource> embedded,
+        IReadOnlyList<string> files, IReadOnlyList<string> projects, IReadOnlyList<string> exclude,
+        IReadOnlySet<string> declared, bool allowScriptClr, bool bootstrap)
     {
         Path = path;
         Directory = System.IO.Path.GetDirectoryName(path)!;
@@ -351,6 +456,7 @@ public sealed class NcProject
         Check = check;
         Build = build;
         Packages = packages;
+        PackageSource = packageSource;
         Tasks = tasks;
         Server = server;
         Client = client;
@@ -398,6 +504,9 @@ public sealed class NcProject
 
     //Declared package dependencies
     public IReadOnlyList<NcPackage> Packages { get; }
+
+    //Feed the packages are resolved from, empty meaning the default nuget.org index
+    public string PackageSource { get; }
 
     //All tasks defined in the config, including those shadowed by built-ins
     public IReadOnlyList<NcTask> Tasks { get; }
@@ -472,7 +581,8 @@ public sealed class NcProject
         }
 
         return new NcProject(Path, Overrides, absent("Check") ? global.Check : Check,
-            absent("Build") ? global.Build : Build, absent("Packages") ? global.Packages : Packages, Tasks,
+            absent("Build") ? global.Build : Build, absent("Packages") ? global.Packages : Packages,
+            PackageSource.Length > 0 ? PackageSource : global.PackageSource, Tasks,
             server, client, sources, template,
             InternalsVisibleTo.Count > 0 ? InternalsVisibleTo : global.InternalsVisibleTo,
             DeployTargets.Count > 0 ? DeployTargets : global.DeployTargets,
@@ -903,9 +1013,9 @@ public sealed class NcProject
         var overrides = ReadBool(root, "Override", false, path);
         var tasks = new List<NcTask>();
         var packages = new List<NcPackage>();
+        var packageSource = string.Empty;
         var check = new NcCheck(string.Empty);
-        var build = new NcBuild(string.Empty, string.Empty, string.Empty, string.Empty, true, true, string.Empty,
-            string.Empty, string.Empty, NcBuild.DefaultDependsOnModApi, NcBuild.DefaultAllowUnsafe);
+        var build = new NcBuild();
         var server = new NcServer(string.Empty, string.Empty, false);
         var client = new NcClient(string.Empty, string.Empty, string.Empty);
         NcSource? sources = null;
@@ -936,6 +1046,8 @@ public sealed class NcProject
                 build = ReadBuild(element, path);
             else if (Folded(name, "Packages"))
                 ReadPackages(element, path, packages);
+            else if (Folded(name, "PackageSource"))
+                packageSource = ReadPackageSource(element, path);
             else if (Folded(name, "Server"))
                 server = ReadServer(element, path);
             else if (Folded(name, "Client"))
@@ -963,7 +1075,7 @@ public sealed class NcProject
         if (bootstrap && !ValidateBootstrapReferences(path, projects, out error))
             return null;
 
-        return new NcProject(path, overrides, check, build, packages, tasks, server, client, sources,
+        return new NcProject(path, overrides, check, build, packages, packageSource, tasks, server, client, sources,
             template, friends, deploy, resources, embedded, files, projects, exclude, declared, allowScriptClr,
             bootstrap);
     }
@@ -1107,24 +1219,83 @@ public sealed class NcProject
         => new((string?)element.Attribute("LangVersion"));
 
     //Read the build settings under <Build>
+    //Every attribute that carries the same name as its msbuild property falls back to the value msbuild would use
     private static NcBuild ReadBuild(XElement element, string path)
     {
         var outputType = (string?)element.Attribute("OutputType") ?? string.Empty;
         if (outputType.Length > 0 && !NcBuild.OutputTypes.Contains(outputType, StringComparer.OrdinalIgnoreCase))
             Warn($"unknown OutputType=\"{outputType}\" in {path}, known ones are {string.Join(", ", NcBuild.OutputTypes)}");
 
-        return new NcBuild(
-            (string?)element.Attribute("AssemblyName") ?? string.Empty,
-            (string?)element.Attribute("Configuration") ?? string.Empty,
-            (string?)element.Attribute("Output") ?? string.Empty,
-            (string?)element.Attribute("ExtraArgs") ?? string.Empty,
-            ReadBool(element, "Nullable", true, path),
-            ReadBool(element, "ImplicitUsings", true, path),
-            (string?)element.Attribute("DefineConstants") ?? string.Empty,
-            outputType,
-            (string?)element.Attribute("RootNamespace") ?? string.Empty,
-            ReadBool(element, "DependsOnModApi", NcBuild.DefaultDependsOnModApi, path),
-            ReadBool(element, "AllowUnsafe", NcBuild.DefaultAllowUnsafe, path));
+        var debugType = (string?)element.Attribute("DebugType") ?? NcBuild.DefaultDebugType;
+        if (!NcBuild.DebugTypes.Contains(debugType, StringComparer.OrdinalIgnoreCase))
+        {
+            Warn($"unknown DebugType=\"{debugType}\" in {path}, known ones are "
+                + $"{string.Join(", ", NcBuild.DebugTypes)}, using {NcBuild.DefaultDebugType}");
+            debugType = NcBuild.DefaultDebugType;
+        }
+
+        var platformTarget = (string?)element.Attribute("PlatformTarget") ?? NcBuild.DefaultPlatformTarget;
+        if (!NcBuild.PlatformTargets.Contains(platformTarget, StringComparer.OrdinalIgnoreCase))
+        {
+            Warn($"unknown PlatformTarget=\"{platformTarget}\" in {path}, known ones are "
+                + $"{string.Join(", ", NcBuild.PlatformTargets)}, using {NcBuild.DefaultPlatformTarget}");
+            platformTarget = NcBuild.DefaultPlatformTarget;
+        }
+
+        var noEmbed = new List<string>();
+        foreach (var child in element.Elements())
+        {
+            if (!Folded(child.Name.LocalName, "NoEmbed"))
+            {
+                Warn($"unknown element <{child.Name.LocalName}> under <Build> in {path}, ignored");
+                continue;
+            }
+
+            noEmbed.AddRange(Split((string?)child.Attribute("Include"), ';'));
+        }
+
+        return new NcBuild
+        {
+            AssemblyName = (string?)element.Attribute("AssemblyName") ?? string.Empty,
+            Configuration = (string?)element.Attribute("Configuration") ?? string.Empty,
+            Output = (string?)element.Attribute("Output") ?? string.Empty,
+            ExtraArgs = (string?)element.Attribute("ExtraArgs") ?? string.Empty,
+            Nullable = ReadBool(element, "Nullable", true, path),
+            ImplicitUsings = ReadBool(element, "ImplicitUsings", true, path),
+            DefineConstants = (string?)element.Attribute("DefineConstants") ?? string.Empty,
+            OutputType = outputType,
+            RootNamespace = (string?)element.Attribute("RootNamespace") ?? string.Empty,
+            DependsOnModApi = ReadBool(element, "DependsOnModApi", NcBuild.DefaultDependsOnModApi, path),
+            //the old name is still read so a config written before the rename keeps building
+            AllowUnsafeBlocks = ReadBool(element, "AllowUnsafeBlocks",
+                ReadBool(element, "AllowUnsafe", NcBuild.DefaultAllowUnsafeBlocks, path), path),
+            SharedDependencies = ReadBool(element, "SharedDependencies", NcBuild.DefaultSharedDependencies, path),
+            Optimize = ReadBool(element, "Optimize", NcBuild.DefaultOptimize, path),
+            CheckForOverflowUnderflow = ReadBool(element, "CheckForOverflowUnderflow", false, path),
+            PlatformTarget = platformTarget,
+            WarningLevel = ReadInt(element, "WarningLevel", NcBuild.DefaultWarningLevel, path),
+            NoWarn = (string?)element.Attribute("NoWarn") ?? string.Empty,
+            WarningsAsErrors = (string?)element.Attribute("WarningsAsErrors") ?? string.Empty,
+            WarningsNotAsErrors = (string?)element.Attribute("WarningsNotAsErrors") ?? string.Empty,
+            TreatWarningsAsErrors = ReadBool(element, "TreatWarningsAsErrors",
+                NcBuild.DefaultTreatWarningsAsErrors, path),
+            Deterministic = ReadBool(element, "Deterministic", NcBuild.DefaultDeterministic, path),
+            PathMap = (string?)element.Attribute("PathMap") ?? string.Empty,
+            Features = (string?)element.Attribute("Features") ?? string.Empty,
+            EnableNETAnalyzers = ReadBool(element, "EnableNETAnalyzers", NcBuild.DefaultEnableNETAnalyzers, path),
+            AnalysisLevel = (string?)element.Attribute("AnalysisLevel") ?? NcBuild.DefaultAnalysisLevel,
+            EnforceCodeStyleInBuild = ReadBool(element, "EnforceCodeStyleInBuild", false, path),
+            DebugType = debugType,
+            DebugSymbols = ReadBool(element, "DebugSymbols", NcBuild.DefaultDebugSymbols, path),
+            GenerateDocumentationFile = ReadBool(element, "GenerateDocumentationFile",
+                NcBuild.DefaultGenerateDocumentationFile, path),
+            DocumentationFile = (string?)element.Attribute("DocumentationFile") ?? string.Empty,
+            EmitCompilerGeneratedFiles = ReadBool(element, "EmitCompilerGeneratedFiles",
+                NcBuild.DefaultEmitCompilerGeneratedFiles, path),
+            CompilerGeneratedFilesOutputPath =
+                (string?)element.Attribute("CompilerGeneratedFilesOutputPath") ?? string.Empty,
+            NoEmbed = noEmbed,
+        };
     }
 
     //Read each package dependency under <Packages>
@@ -1147,6 +1318,19 @@ public sealed class NcProject
 
             packages.Add(new NcPackage(id, (string?)element.Attribute("Version") ?? string.Empty));
         }
+    }
+
+    //Read the feed the packages are resolved from, empty meaning the default nuget.org index
+    private static string ReadPackageSource(XElement element, string path)
+    {
+        var url = ((string?)element.Attribute("Url") ?? string.Empty).Trim();
+        if (url.Length == 0)
+        {
+            Warn($"a <PackageSource> in {path} has no Url, the default nuget.org index is used");
+            return string.Empty;
+        }
+
+        return url;
     }
 
     //Whether two element names differ only in case
@@ -1297,12 +1481,26 @@ public sealed class NcProject
         return fallback;
     }
 
+    //ReadInt reads a whole number attribute, falling back when it is absent or not a number
+    private static int ReadInt(XElement element, string name, int fallback, string path)
+    {
+        var raw = (string?)element.Attribute(name);
+        if (string.IsNullOrWhiteSpace(raw))
+            return fallback;
+
+        if (int.TryParse(raw, out var value))
+            return value;
+
+        Warn($"{name}=\"{raw}\" in {path} is not a number, using {fallback}");
+        return fallback;
+    }
+
     //Tolerable config problems are reported here in yellow without aborting
     private static void Warn(string message)
     {
         var previous = Console.ForegroundColor;
         Console.ForegroundColor = ConsoleColor.Yellow;
-        Console.WriteLine($"warning: {message}");
+        Progress.WriteLine($"warning: {message}");
         Console.ForegroundColor = previous;
     }
 }

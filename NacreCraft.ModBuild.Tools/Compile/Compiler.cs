@@ -1,10 +1,10 @@
-using System.Globalization;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Emit;
 using NacreCraft.ModBuild.Core;
 using NacreCraft.ModBuild.Diagnostics;
+using NacreCraft.ModBuild.Tools;
 //The two Diagnostic and two DiagnosticSeverity names clash, so the aliases below keep them apart
 using RoslynDiagnostic = Microsoft.CodeAnalysis.Diagnostic;
 using ProjectDiagnostic = NacreCraft.ModBuild.Diagnostics.Diagnostic;
@@ -28,7 +28,7 @@ public static class Compiler
         //Check freshness first, since comparing timestamps is far cheaper than assembling a compilation
         if (Incremental.IsUpToDate(target, Inputs(root, project)))
         {
-            Console.WriteLine($"Up to date, {target}");
+            Progress.WriteLine($"Up to date, {target}");
             return Deploy(root, project, target, out error);
         }
 
@@ -55,11 +55,11 @@ public static class Compiler
             return false;
         }
 
-        Console.WriteLine($"Compiling {assemblyName} with Roslyn");
+        Progress.WriteLine($"Compiling {assemblyName} with Roslyn");
         if (!Emit(compilation, project, root, target, out error))
             return false;
 
-        Console.WriteLine($"Finished build, {target}");
+        Progress.WriteLine($"Finished build, {target}");
         return Deploy(root, project, target, out error);
     }
 
@@ -105,7 +105,7 @@ public static class Compiler
         }
 
         if (copied > 0)
-            Console.WriteLine($"Copied {copied} referenced assembly(ies) to {directory}");
+            Progress.WriteLine($"Copied {copied} referenced assembly(ies) to {directory}");
 
         return true;
     }
@@ -184,24 +184,36 @@ public static class Compiler
             .Select(name => $"[assembly: InternalsVisibleTo(\"{Escape(name)}\")]"));
 
     //Writes the assembly and symbols through temp files that are only moved into place on success
+    //Debug settings follow <Build>: a project can turn the pdb off, embed it, or ask for the xml documentation
     private static bool Emit(Compilation compilation, NcProject project, string root, string target, out string error)
     {
         error = string.Empty;
         var directory = Path.GetDirectoryName(target)!;
         var temporary = Path.Combine(directory, Path.GetFileName(target) + ".tmp");
         var symbols = Path.ChangeExtension(temporary, ".pdb");
+        var documentation = Path.ChangeExtension(temporary, ".xml");
+
+        //an embedded pdb travels inside the assembly, so no file is written next to it
+        var format = FormatOf(project.Build.DebugType);
+        var writesPdb = project.Build.DebugSymbols && format is not null
+            && format is not DebugInformationFormat.Embedded;
+        var writesDocumentation = project.Build.GenerateDocumentationFile;
 
         try
         {
             Directory.CreateDirectory(directory);
             using (var pe = File.Create(temporary))
-            using (var pdb = File.Create(symbols))
+            using (var pdb = writesPdb ? File.Create(symbols) : null)
+            using (var xml = writesDocumentation ? File.Create(documentation) : null)
             {
                 var result = compilation.Emit(
                     pe,
                     pdb,
-                    options: new EmitOptions(debugInformationFormat: DebugInformationFormat.PortablePdb),
-                    manifestResources: Resources(root, project));
+                    xml,
+                    win32Resources: null,
+                    manifestResources: Resources(root, project),
+                    options: new EmitOptions(
+                        debugInformationFormat: format ?? DebugInformationFormat.PortablePdb));
 
                 if (!result.Success)
                 {
@@ -212,10 +224,19 @@ public static class Compiler
             }
 
             File.Move(temporary, target, overwrite: true);
-            File.Move(symbols, Path.ChangeExtension(target, ".pdb"), overwrite: true);
+            if (writesPdb)
+                File.Move(symbols, Path.ChangeExtension(target, ".pdb"), overwrite: true);
+
+            if (writesDocumentation)
+            {
+                var destination = DocumentationOf(project, root, target);
+                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                File.Move(documentation, destination, overwrite: true);
+            }
+
             return true;
         }
-        catch (IOException e)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
         {
             error = $"cannot write {target}: {e.Message}";
             return false;
@@ -224,8 +245,25 @@ public static class Compiler
         {
             Discard(temporary);
             Discard(symbols);
+            Discard(documentation);
         }
     }
+
+    //FormatOf maps the msbuild DebugType value, none meaning no symbols at all
+    private static DebugInformationFormat? FormatOf(string value)
+        => value.ToLowerInvariant() switch
+        {
+            "none" => null,
+            "embedded" => DebugInformationFormat.Embedded,
+            "full" => DebugInformationFormat.Pdb,
+            _ => DebugInformationFormat.PortablePdb,
+        };
+
+    //DocumentationOf resolves where the xml documentation goes, the assembly name beside the output by default
+    private static string DocumentationOf(NcProject project, string root, string target)
+        => project.Build.DocumentationFile.Length > 0
+            ? Path.GetFullPath(Path.Combine(root, project.Build.DocumentationFile))
+            : Path.ChangeExtension(target, ".xml");
 
     //Resources to embed; the manifest is the loader's only way to recognize a mod and it points at the icon
     //Third party dependencies ride along because a distributed mod is one dll and the loader falls back to embedded resources for anything missing
@@ -252,17 +290,33 @@ public static class Compiler
         if (icon is not null && File.Exists(icon))
             AddFile(Path.GetFileName(icon), icon);
 
+        var kernel = project.Build.SharedDependencies ? KernelNames(root) : null;
         foreach (var path in PackageResolver.Assemblies(root))
         {
-            if (File.Exists(path))
-                AddFile(Path.GetFileName(path), path);
+            if (!File.Exists(path))
+                continue;
+
+            var name = Path.GetFileName(path);
+            if (project.Build.NoEmbed.Contains(name, StringComparer.OrdinalIgnoreCase))
+            {
+                Trace.Log($"package {name} is never embedded");
+                continue;
+            }
+
+            if (kernel is not null && kernel.Contains(name))
+            {
+                Trace.Log($"package {name} is provided by the kernel, not embedded");
+                continue;
+            }
+
+            AddFile(name, path);
         }
 
         if (project.AvaloniaResources.Count > 0)
         {
             var packed = AvaloniaResources.Pack(root, project.AvaloniaResources);
             if (packed is null)
-                Console.WriteLine("warning: <AvaloniaResources> matched no file, nothing is packed");
+                Progress.WriteLine("warning: <AvaloniaResources> matched no file, nothing is packed");
             else
                 Add(AvaloniaResources.ResourceName, () => new MemoryStream(packed, writable: false));
         }
@@ -273,7 +327,7 @@ public static class Compiler
             var name = item.LogicalName.Length > 0 ? item.LogicalName : DefaultName(root, project, item.Path);
             if (name is null)
             {
-                Console.WriteLine($"warning: {Path.GetRelativePath(root, item.Path)} is outside the project, "
+                Progress.WriteLine($"warning: {Path.GetRelativePath(root, item.Path)} is outside the project, "
                     + "add a LogicalName to its <Resource> in <EmbeddedResources>");
                 continue;
             }
@@ -292,6 +346,19 @@ public static class Compiler
         return resources;
     }
 
+    //KernelNames the assemblies the framework already ships, which a mod does not have to carry again
+    private static HashSet<string> KernelNames(string root)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var kernel = Path.Combine(root, ProjectLayout.Kernel);
+        if (!Directory.Exists(kernel))
+            return names;
+
+        foreach (var path in Directory.EnumerateFiles(kernel, "*.dll", SearchOption.TopDirectoryOnly))
+            names.Add(Path.GetFileName(path));
+        return names;
+    }
+
     //Expands the resources declared in <EmbeddedResources> and warns when a pattern matches nothing
     private static List<ExpandedResource> Embedded(string root, NcProject project)
     {
@@ -301,7 +368,7 @@ public static class Compiler
             var matched = PathPattern.Match(root, resource.Include).ToList();
             if (matched.Count == 0)
             {
-                Console.WriteLine($"warning: <EmbeddedResources> matched no file for {resource.Include}");
+                Progress.WriteLine($"warning: <EmbeddedResources> matched no file for {resource.Include}");
                 continue;
             }
 
@@ -347,10 +414,12 @@ public static class Compiler
                 ? string.Empty
                 : Path.GetRelativePath(root, span.Path).Replace('\\', '/');
 
+            var fixes = CSharpAnalyzer.Fixes(compilation, diagnostic, namespaces, root);
+
             items.Add(new ProjectDiagnostic(
                 ProjectSeverity.Error,
                 diagnostic.Id,
-                diagnostic.GetMessage(CultureInfo.InvariantCulture),
+                CSharpAnalyzer.MessageOf(diagnostic, fixes),
                 file,
                 span.StartLinePosition.Line + 1,
                 span.StartLinePosition.Character + 1,
@@ -358,7 +427,7 @@ public static class Compiler
                 SourceLine(span.Path, span.StartLinePosition.Line + 1),
                 string.Empty,
                 diagnostic.Descriptor.HelpLinkUri,
-                CSharpAnalyzer.Fixes(compilation, diagnostic, namespaces, root)));
+                fixes));
         }
         return items;
     }

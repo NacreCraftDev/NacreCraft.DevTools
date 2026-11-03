@@ -4,11 +4,12 @@ using NacreCraft.ModBuild.Core;
 
 namespace NacreCraft.ModBuild.Tools;
 
-//Hooks the msbuild assemblies bundled with the local sdk into assembly resolution
-//ncm does not ship them and the engine must be the sdk's own copy, or the sdk's resolvers and targets break on mismatched interfaces
+//Hooks the msbuild assemblies into assembly resolution
+//The engine ships beside the tool, so package targets run without a local sdk; an sdk copy is used only when the
+//bundled files are absent, such as a build output that was cleaned after the tool was packed
 internal static class MsBuildLibrary
 {
-    //Local sdk directory, null when this machine has none
+    //Directory holding the engine, null when neither the tool nor an sdk provides one
     private static string? _directory;
     private static bool _attached;
 
@@ -44,9 +45,14 @@ internal static class MsBuildLibrary
         return File.Exists(path) ? context.LoadFromAssemblyPath(path) : null;
     }
 
-    //Picks the highest-version sdk directory
+    //Picks the bundled engine first, then the highest-version sdk directory
     private static string? Locate()
     {
+        //the tool ships the engine so package targets work on a machine that has no sdk at all
+        var bundled = AppContext.BaseDirectory;
+        if (File.Exists(Path.Combine(bundled, "MSBuild.dll")))
+            return bundled;
+
         var root = Environment.GetEnvironmentVariable("DOTNET_ROOT");
         if (string.IsNullOrEmpty(root))
         {

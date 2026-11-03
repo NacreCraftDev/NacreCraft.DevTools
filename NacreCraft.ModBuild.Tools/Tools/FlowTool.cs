@@ -1,7 +1,6 @@
 using NacreCraft.ModBuild.Compile;
 using NacreCraft.ModBuild.Core;
 using NacreCraft.ModBuild.Diagnostics;
-using Spectre.Console;
 
 namespace NacreCraft.ModBuild.Tools;
 
@@ -146,24 +145,14 @@ internal static class FlowTool
         ProjectCompilation? project = null;
         var failure = string.Empty;
 
-        //the live bar needs a terminal; a redirected console gets the scan without it so logs stay clean
-        if (!Console.IsOutputRedirected && !Console.IsErrorRedirected)
+        //the live line needs a terminal; a redirected console gets the scan without it so logs stay clean
+        Progress.Run(_ =>
         {
-            AnsiConsole.Progress()
-                .AutoClear(true)
-                .Columns(new ScanColumn())
-                .Start(context =>
-                {
-                    var compile = context.AddTask("scanning", maxValue: 100);
-                    project = CompilationFactory.Create(rootDirectory, options, out failure,
-                        (done, total, file) => Update(compile, done, total, file, rootDirectory));
-                    context.RemoveTask(compile);
-                });
-        }
-        else
-        {
-            project = CompilationFactory.Create(rootDirectory, options, out failure);
-        }
+            Progress.SetTotal(1);
+            Progress.Enter("parse", 1, "scanning sources");
+            project = CompilationFactory.Create(rootDirectory, options, out failure,
+                Progress.Scanner(rootDirectory), Progress.Detail);
+        });
 
         if (project is null)
         {
@@ -235,15 +224,6 @@ internal static class FlowTool
         => Console.WriteLine(
             "Usage: ncm flow [-p|--project <dir>] [-f|--file <path>] [-c|--class <name>] [--no-ncproj] [--exclude <pattern>] [--depth <n>] [--all] [--no-color] [-o|--output <file>]");
 
-    //Update moves a progress task to the file that just finished
-    private static void Update(ProgressTask task, int done, int total, string file, string rootDirectory)
-    {
-        task.MaxValue = Math.Max(1, total);
-        task.Value = done;
-        task.Description = file.Length == 0
-            ? string.Empty
-            : Path.GetRelativePath(rootDirectory, file).Replace('\\', '/');
-    }
 
     private static bool Value(string[] args, ref int index, out string value)
     {

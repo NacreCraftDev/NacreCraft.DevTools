@@ -32,6 +32,19 @@ public static class ToolRegistry
     public static ToolEntry? Find(string name)
         => Entries.FirstOrDefault(entry => string.Equals(entry.Name, name, StringComparison.OrdinalIgnoreCase));
 
+    //Unregister removes a tool by name, which lets an alternate entry point drop what it does not offer
+    //returns false when no tool carries that name, so a typo in a filter list is visible at the call site
+    public static bool Unregister(string name)
+    {
+        var index = Entries.FindIndex(entry =>
+            string.Equals(entry.Name, name, StringComparison.OrdinalIgnoreCase));
+        if (index < 0)
+            return false;
+
+        Entries.RemoveAt(index);
+        return true;
+    }
+
     //Subcommands such as view or example from the parameter list; bracketed positionals and dash options are excluded
     public static List<string> SubCommandsOf(ToolEntry tool)
         => tool.Parameters

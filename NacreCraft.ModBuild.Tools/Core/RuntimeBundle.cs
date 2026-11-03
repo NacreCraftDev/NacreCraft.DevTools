@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
-using Spectre.Console;
+using NacreCraft.ModBuild.Tools;
 
 namespace NacreCraft.ModBuild.Core;
 
@@ -99,7 +99,7 @@ internal sealed class RuntimeBundle
         }
         catch (ArgumentException e)
         {
-            Console.WriteLine($"error: Source Pattern \"{pattern}\" does not compile: {e.Message}");
+            Progress.WriteLine($"error: Source Pattern \"{pattern}\" does not compile: {e.Message}");
         }
     }
 
@@ -109,10 +109,10 @@ internal sealed class RuntimeBundle
         var entries = ReadIndex();
         if (entries.Count == 0)
         {
-            Console.WriteLine($"{label} cache is empty, downloading {IndexFileName}");
+            Progress.WriteLine($"{label} cache is empty, downloading {IndexFileName}");
             if (!TryDownload(IndexFileName, out var indexError))
             {
-                Console.WriteLine($"error: failed to download {Url(IndexFileName)}: {indexError}");
+                Progress.WriteLine($"error: failed to download {Url(IndexFileName)}: {indexError}");
                 return false;
             }
 
@@ -121,7 +121,7 @@ internal sealed class RuntimeBundle
 
         if (entries.Count == 0)
         {
-            Console.WriteLine($"error: {IndexPath} lists no file");
+            Progress.WriteLine($"error: {IndexPath} lists no file");
             return false;
         }
 
@@ -142,24 +142,24 @@ internal sealed class RuntimeBundle
             return true;
         }
 
-        Console.WriteLine($"Downloading {missing.Count} {label} file(s) to {CacheRoot}");
+        Progress.WriteLine($"Downloading {missing.Count} {label} file(s) to {CacheRoot}");
         return Download(missing);
     }
 
     //Refresh fetches the remote index over the local one and fills in files that differ by hash
     public bool Refresh()
     {
-        Console.WriteLine($"Refreshing {label} cache from {Url(IndexFileName)}");
+        Progress.WriteLine($"Refreshing {label} cache from {Url(IndexFileName)}");
         if (!TryDownload(IndexFileName, out var error))
         {
-            Console.WriteLine($"error: failed to download {Url(IndexFileName)}: {error}");
+            Progress.WriteLine($"error: failed to download {Url(IndexFileName)}: {error}");
             return false;
         }
 
         var entries = ReadIndex();
         if (entries.Count == 0)
         {
-            Console.WriteLine($"error: {IndexPath} lists no file");
+            Progress.WriteLine($"error: {IndexPath} lists no file");
             return false;
         }
 
@@ -176,11 +176,11 @@ internal sealed class RuntimeBundle
 
         if (stale.Count == 0)
         {
-            Console.WriteLine($"{label} cache is up to date");
+            Progress.WriteLine($"{label} cache is up to date");
             return true;
         }
 
-        Console.WriteLine($"Downloading {stale.Count} changed {label} file(s) to {CacheRoot}");
+        Progress.WriteLine($"Downloading {stale.Count} changed {label} file(s) to {CacheRoot}");
         return Download(stale);
     }
 
@@ -235,57 +235,28 @@ internal sealed class RuntimeBundle
         return full.StartsWith(root, StringComparison.OrdinalIgnoreCase) ? full : null;
     }
 
-    //Download every entry, returning false as soon as one fails
+    //Download every entry, naming the file being fetched in the running progress stage
     private bool Download(List<BundleFile> files)
     {
-        if (!Transfer.Enabled)
-        {
-            if (DownloadCore(files, null, out var failure))
-                return true;
-
-            Console.WriteLine($"error: {failure}");
-            return false;
-        }
-
-        var ok = false;
-        var error = string.Empty;
-        AnsiConsole.Progress()
-            .Columns(
-                new TaskDescriptionColumn(),
-                new ProgressBarColumn(),
-                new PercentageColumn())
-            .Start(context =>
-            {
-                var task = context.AddTask($"downloading {label} files", maxValue: files.Count);
-                ok = DownloadCore(files, name =>
-                {
-                    task.Description = $"[green]{Markup.Escape(name)}[/]";
-                    task.Increment(1);
-                }, out error);
-            });
-
-        if (ok)
+        if (DownloadCore(files, out var failure))
             return true;
 
-        Console.WriteLine($"error: {error}");
+        Progress.WriteLine($"error: {failure}");
         return false;
     }
 
     //Download every entry and stop at the first failure
-    //Without a progress bar every file is announced on its own line before it starts, which is what a pipe reader sees
-    private bool DownloadCore(List<BundleFile> files, Action<string>? completed, out string error)
+    private bool DownloadCore(List<BundleFile> files, out string error)
     {
         error = string.Empty;
         for (var index = 0; index < files.Count; index++)
         {
             var entry = files[index];
-            if (completed is null)
-                Console.WriteLine($"Downloading {label} files {index + 1}/{files.Count}: {entry.Path}");
+            Progress.Transfer($"{label} files", index + 1, files.Count, entry.Path);
 
             if (TryDownload(entry.Path, out var failure))
             {
                 Trace.Log($"{label} file {index + 1}/{files.Count} done {entry.Path}");
-                completed?.Invoke(entry.Path);
                 continue;
             }
 

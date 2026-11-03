@@ -132,7 +132,7 @@ internal static class ProjectReferences
             : config.Build.AssemblyName;
         var target = Path.Combine(directory, config.Build.Output, name + ".dll");
 
-        Console.WriteLine($"Building referenced project {new DirectoryInfo(directory).Name}");
+        Progress.WriteLine($"Building referenced project {new DirectoryInfo(directory).Name}");
         return Compiler.Compile(directory, config, name, target, null, out error) ? target : null;
     }
 
@@ -148,7 +148,7 @@ internal static class ProjectReferences
         }
 
         var name = Path.GetFileNameWithoutExtension(project);
-        Console.WriteLine($"Building referenced project {name} with dotnet");
+        Progress.WriteLine($"Building referenced project {name} with dotnet");
 
         var startInfo = new ProcessStartInfo("dotnet")
         {

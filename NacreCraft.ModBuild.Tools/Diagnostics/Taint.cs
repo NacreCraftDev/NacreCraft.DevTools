@@ -40,10 +40,30 @@ internal sealed record TaintOptions(
 //TaintMatcher turns rule patterns into one lookup over the methods the analysis meets
 internal sealed class TaintMatcher
 {
+    //Builtin sanitizers rewrite a value as plain text, so a sink pattern broad enough to catch them is noise
+    //They come before the configured rules, since such a call is not a sink however the project describes it
+    private static readonly string[] BuiltinSanitizers =
+    [
+        "System.Uri.EscapeDataString",
+        "System.Uri.EscapeUriString",
+        "System.Net.WebUtility.HtmlEncode",
+        "System.Net.WebUtility.HtmlDecode",
+        "System.Net.WebUtility.UrlEncode",
+        "System.Net.WebUtility.UrlDecode",
+        "System.Web.HttpUtility.HtmlEncode",
+        "System.Web.HttpUtility.HtmlDecode",
+        "System.Web.HttpUtility.UrlEncode",
+        "System.Web.HttpUtility.UrlDecode",
+        "System.Text.RegularExpressions.Regex.Escape",
+    ];
+
     private readonly List<(TaintKind Kind, Regex Pattern)> _rules = new();
 
     public TaintMatcher(IEnumerable<TaintRule> rules)
     {
+        foreach (var sanitizer in BuiltinSanitizers)
+            _rules.Add((TaintKind.Sanitizer, new Regex(Pattern(sanitizer), RegexOptions.CultureInvariant)));
+
         foreach (var rule in rules)
         {
             if (string.IsNullOrWhiteSpace(rule.Pattern))

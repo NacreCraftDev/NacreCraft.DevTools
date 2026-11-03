@@ -3,7 +3,6 @@ using Microsoft.CodeAnalysis;
 using NacreCraft.ModBuild.Compile;
 using NacreCraft.ModBuild.Core;
 using NacreCraft.ModBuild.Diagnostics;
-using Spectre.Console;
 
 namespace NacreCraft.ModBuild.Tools;
 
@@ -138,32 +137,20 @@ internal static class CallGraphTool
         CallGraph? graph = null;
         var failure = string.Empty;
 
-        //the live bar needs a terminal; a redirected console gets the scan without it so logs stay clean
-        if (!Console.IsOutputRedirected && !Console.IsErrorRedirected)
+        //the live line needs a terminal; a redirected console gets the scan without it so logs stay clean
+        Progress.Run(_ =>
         {
-            AnsiConsole.Progress()
-                .AutoClear(true)
-                .Columns(new ScanColumn())
-                .Start(context =>
-                {
-                    var compile = context.AddTask("scanning", maxValue: 100);
-                    project = CompilationFactory.Create(rootDirectory, options, out failure,
-                        (done, total, file) => Update(compile, done, total, file, rootDirectory));
-                    context.RemoveTask(compile);
-                    if (project is null)
-                        return;
+            Progress.SetTotal(2);
+            Progress.Enter("parse", 1, "scanning sources");
+            project = CompilationFactory.Create(rootDirectory, options, out failure,
+                Progress.Scanner(rootDirectory), Progress.Detail);
+            if (project is null)
+                return;
 
-                    var collect = context.AddTask("scanning", maxValue: 100);
-                    graph = CallGraphBuilder.Build(project.Compilation, project.Sources,
-                        (done, total, file) => Update(collect, done, total, file, rootDirectory));
-                });
-        }
-        else
-        {
-            project = CompilationFactory.Create(rootDirectory, options, out failure);
-            if (project is not null)
-                graph = CallGraphBuilder.Build(project.Compilation, project.Sources);
-        }
+            Progress.Enter("collect", 1, "call graph");
+            graph = CallGraphBuilder.Build(project.Compilation, project.Sources,
+                Progress.Scanner(rootDirectory));
+        });
 
         if (project is null || graph is null)
         {
@@ -232,15 +219,6 @@ internal static class CallGraphTool
         return true;
     }
 
-    //Update moves a progress task to the file that just finished
-    private static void Update(ProgressTask task, int done, int total, string file, string rootDirectory)
-    {
-        task.MaxValue = Math.Max(1, total);
-        task.Value = done;
-        task.Description = file.Length == 0
-            ? string.Empty
-            : Path.GetRelativePath(rootDirectory, file).Replace('\\', '/');
-    }
 
     //Detect takes every method of the project nothing else calls, which is the top of the graph
     private static List<CallGraph.Node> Detect(CallGraph graph)
@@ -251,9 +229,30 @@ internal static class CallGraphTool
             .ToList();
 
     //Candidate whether a method can stand as an entry; constructors and local functions are reached from their callers
+    //A private or file local method nothing calls is dead code, not the top of the graph
     private static bool Candidate(IMethodSymbol method)
-        => method.MethodKind == MethodKind.Ordinary
-            && (method.Name == "<Main>$" || (!method.IsImplicitlyDeclared && !method.Name.StartsWith('<')));
+    {
+        if (method.MethodKind != MethodKind.Ordinary)
+            return false;
+
+        if (IsMain(method))
+            return true;
+
+        if (method.IsImplicitlyDeclared || method.Name.StartsWith('<'))
+            return false;
+
+        if (method.ContainingType?.IsFileLocal == true)
+            return false;
+
+        if (method.IsAbstract || method.IsExtern)
+            return false;
+
+        if (method.DeclaredAccessibility == Accessibility.Private)
+            return false;
+
+        return !method.GetAttributes().Any(attribute =>
+            attribute.AttributeClass?.ToDisplayString() == "System.Runtime.CompilerServices.CompilerGeneratedAttribute");
+    }
 
     private static bool IsMain(IMethodSymbol method) => method.Name is "Main" or "<Main>$";
 

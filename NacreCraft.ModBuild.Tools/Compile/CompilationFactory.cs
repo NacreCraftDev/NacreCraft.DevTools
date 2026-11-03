@@ -10,12 +10,21 @@ using NacreCraft.ModBuild.Diagnostics;
 namespace NacreCraft.ModBuild.Compile;
 
 public sealed record CompileOptions(string AssemblyName, string LangVersion, bool Nullable, bool ImplicitUsings,
-    string DefineConstants, OutputKind OutputKind, bool AllowUnsafe, bool Lint, bool Taint)
+    string DefineConstants, OutputKind OutputKind, bool AllowUnsafeBlocks, bool Optimize, bool CheckForOverflowUnderflow,
+    string PlatformTarget, int WarningLevel, string NoWarn, string WarningsAsErrors, string WarningsNotAsErrors,
+    bool TreatWarningsAsErrors, bool Deterministic, string PathMap, string Features, bool EnableNETAnalyzers,
+    string AnalysisLevel, bool EnforceCodeStyleInBuild, bool GenerateDocumentationFile,
+    bool EmitCompilerGeneratedFiles, string CompilerGeneratedFilesOutputPath, bool Lint, bool Taint)
 {
     //Matches the template project's defaults and is used when only checking
     public static CompileOptions Default { get; } =
         new("ncm-project", NcCheck.DefaultLangVersion, true, true, string.Empty,
-            OutputKind.DynamicallyLinkedLibrary, NcBuild.DefaultAllowUnsafe, false, false);
+            OutputKind.DynamicallyLinkedLibrary, NcBuild.DefaultAllowUnsafeBlocks, NcBuild.DefaultOptimize, false,
+            NcBuild.DefaultPlatformTarget, NcBuild.DefaultWarningLevel, string.Empty, string.Empty, string.Empty,
+            NcBuild.DefaultTreatWarningsAsErrors, NcBuild.DefaultDeterministic, string.Empty, string.Empty,
+            NcBuild.DefaultEnableNETAnalyzers, NcBuild.DefaultAnalysisLevel, false,
+            NcBuild.DefaultGenerateDocumentationFile, NcBuild.DefaultEmitCompilerGeneratedFiles, string.Empty,
+            false, false);
 
     //Builds options from the project config, with fallbackName covering a missing assembly name
     public static CompileOptions From(NcProject project, string? fallbackName = null, bool lint = false,
@@ -31,7 +40,24 @@ public sealed record CompileOptions(string AssemblyName, string LangVersion, boo
             string.Equals(project.Build.OutputType, NcBuild.ExeOutputType, StringComparison.OrdinalIgnoreCase)
                 ? OutputKind.ConsoleApplication
                 : OutputKind.DynamicallyLinkedLibrary,
-            project.Build.AllowUnsafe,
+            project.Build.AllowUnsafeBlocks,
+            project.Build.Optimize,
+            project.Build.CheckForOverflowUnderflow,
+            project.Build.PlatformTarget,
+            project.Build.WarningLevel,
+            project.Build.NoWarn,
+            project.Build.WarningsAsErrors,
+            project.Build.WarningsNotAsErrors,
+            project.Build.TreatWarningsAsErrors,
+            project.Build.Deterministic,
+            project.Build.PathMap,
+            project.Build.Features,
+            project.Build.EnableNETAnalyzers,
+            project.Build.AnalysisLevel,
+            project.Build.EnforceCodeStyleInBuild,
+            project.Build.GenerateDocumentationFile,
+            project.Build.EmitCompilerGeneratedFiles,
+            project.Build.CompilerGeneratedFilesOutputPath,
             lint,
             taint);
 }
@@ -80,7 +106,7 @@ public static class CompilationFactory
     //Returns null on failure and writes the reason into error
     //progress receives the finished count, the total and the file, which a tool can show while a large project parses
     public static ProjectCompilation? Create(string root, CompileOptions options, out string error,
-        Action<int, int, string>? progress = null)
+        Action<int, int, string>? progress = null, Action<string>? detail = null, string configuration = "Debug")
     {
         error = string.Empty;
 
@@ -91,6 +117,7 @@ public static class CompilationFactory
             return null;
         }
 
+        detail?.Invoke("scanning sources");
         var files = SourceFiles.Enumerate(root).ToList();
         if (files.Count == 0)
         {
@@ -124,25 +151,25 @@ public static class CompilationFactory
                 trees.Add(tree);
         }
 
-        var referencePaths = ReferencePaths(root);
+        //A plain csproj never runs the UI compiler, so the fields its code-behind expects from the UI files are declared here
+        if (NcProject.TryFind(root, out _) is null)
+        {
+            foreach (var stub in XamlStubs.Sources(root))
+                trees.Add(CSharpSyntaxTree.ParseText(stub, parseOptions, path: XamlStubs.Path, encoding: Encoding.UTF8));
+        }
+
+        detail?.Invoke("resolving references");
+        var referencePaths = ReferencePaths(root, detail, configuration);
+        detail?.Invoke("loading references");
         var compilation = CSharpCompilation.Create(
             options.AssemblyName,
             trees,
-            LoadReferences(referencePaths),
-            new CSharpCompilationOptions(
-                options.OutputKind,
-                allowUnsafe: options.AllowUnsafe,
-                nullableContextOptions: options.Nullable
-                    ? NullableContextOptions.Enable
-                    : NullableContextOptions.Disable,
-                optimizationLevel: OptimizationLevel.Release,
-                deterministic: true,
-                //injection targets and their members are often internal or private, and the default import hides them,
-                //which would make the hook check report a kernel method as missing; accessibility is still enforced when binding
-                metadataImportOptions: MetadataImportOptions.All));
+            LoadReferences(referencePaths, detail),
+            CompilationOptionsOf(options, root));
 
         //UI projects have members produced by generators, so they must run first or the sources fail to resolve those names
-        var generated = RunGenerators(root, compilation, parseOptions);
+        detail?.Invoke("running generators");
+        var generated = RunGenerators(root, compilation, parseOptions, options);
         return new ProjectCompilation(generated, parseOptions, files, referencePaths);
     }
 
@@ -156,9 +183,106 @@ public static class CompilationFactory
 
     private static CSharpParseOptions ParseOptionsOf(CompileOptions options)
     {
-        var parse = new CSharpParseOptions(LanguageVersionOf(options.LangVersion));
+        //documentation mode is what makes the compiler record doc comments; the xml file is written at emit time
+        var parse = new CSharpParseOptions(LanguageVersionOf(options.LangVersion),
+            options.GenerateDocumentationFile ? DocumentationMode.Diagnose : DocumentationMode.Parse);
         var symbols = Symbols(options.DefineConstants);
-        return symbols.Count == 0 ? parse : parse.WithPreprocessorSymbols(symbols);
+        if (symbols.Count > 0)
+            parse = parse.WithPreprocessorSymbols(symbols);
+
+        var features = FeaturesOf(options.Features);
+        return features.Count == 0 ? parse : parse.WithFeatures(features);
+    }
+
+    //Translates the config into roslyn options, defaulting every switch the way the sdk would
+    private static CSharpCompilationOptions CompilationOptionsOf(CompileOptions options, string root)
+    {
+        var specific = new Dictionary<string, ReportDiagnostic>(StringComparer.OrdinalIgnoreCase);
+        foreach (var id in Ids(options.NoWarn))
+            specific[id] = ReportDiagnostic.Suppress;
+        foreach (var id in Ids(options.WarningsAsErrors))
+            specific[id] = ReportDiagnostic.Error;
+        foreach (var id in Ids(options.WarningsNotAsErrors))
+            specific[id] = ReportDiagnostic.Warn;
+
+        //the analysis level only sets defaults, so an explicit switch above always wins
+        //a project that turns every warning into an error does the same to the rules the level enables
+        foreach (var (id, severity) in AnalyzerSuite.SeveritiesOf(options))
+        {
+            var value = options.TreatWarningsAsErrors && severity == ReportDiagnostic.Warn
+                ? ReportDiagnostic.Error
+                : severity;
+            specific.TryAdd(id, value);
+        }
+
+        return new CSharpCompilationOptions(
+            options.OutputKind,
+            allowUnsafe: options.AllowUnsafeBlocks,
+            nullableContextOptions: options.Nullable
+                ? NullableContextOptions.Enable
+                : NullableContextOptions.Disable,
+            optimizationLevel: options.Optimize ? OptimizationLevel.Release : OptimizationLevel.Debug,
+            checkOverflow: options.CheckForOverflowUnderflow,
+            platform: PlatformOf(options.PlatformTarget),
+            generalDiagnosticOption: options.TreatWarningsAsErrors ? ReportDiagnostic.Error : ReportDiagnostic.Default,
+            warningLevel: options.WarningLevel,
+            specificDiagnosticOptions: specific,
+            deterministic: options.Deterministic,
+            sourceReferenceResolver: PathMapOf(options.PathMap, root),
+            //injection targets and their members are often internal or private, and the default import hides them,
+            //which would make the hook check report a kernel method as missing; accessibility is still enforced when binding
+            metadataImportOptions: MetadataImportOptions.All);
+    }
+
+    //PathMap keeps absolute build paths out of the pdb, a debugger maps them back to the source tree
+    private static SourceFileResolver? PathMapOf(string pathMap, string root)
+    {
+        if (string.IsNullOrWhiteSpace(pathMap))
+            return null;
+
+        var pairs = new List<KeyValuePair<string, string>>();
+        foreach (var entry in pathMap.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var split = entry.IndexOf('=');
+            if (split <= 0 || split == entry.Length - 1)
+                continue;
+
+            pairs.Add(new KeyValuePair<string, string>(entry[..split].Trim(), entry[(split + 1)..].Trim()));
+        }
+
+        return pairs.Count == 0 ? null : new SourceFileResolver([], root, [.. pairs]);
+    }
+
+    //PlatformOf maps the msbuild target name onto the roslyn header value
+    private static Platform PlatformOf(string value)
+        => value.ToLowerInvariant() switch
+        {
+            "x86" => Platform.X86,
+            "x64" => Platform.X64,
+            "arm" => Platform.Arm,
+            "arm64" => Platform.Arm64,
+            "anycpu32bitpreferred" => Platform.AnyCpu32BitPreferred,
+            _ => Platform.AnyCpu,
+        };
+
+    //Ids splits a warning id list on the separators msbuild accepts
+    private static IEnumerable<string> Ids(string value)
+        => value.Split([';', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    //FeaturesOf reads compiler features written as key=value pairs
+    private static List<KeyValuePair<string, string>> FeaturesOf(string value)
+    {
+        var features = new List<KeyValuePair<string, string>>();
+        foreach (var entry in value.Split([';', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var split = entry.IndexOf('=');
+            if (split <= 0)
+                continue;
+
+            features.Add(new KeyValuePair<string, string>(entry[..split].Trim(), entry[(split + 1)..].Trim()));
+        }
+
+        return features;
     }
 
     //Falls back to the latest version when the value is not recognized
@@ -234,7 +358,7 @@ public static class CompilationFactory
     internal static IReadOnlyList<string> References(string root) => ReferencePaths(root);
 
     //Reference assemblies come first because building against implementation assemblies would bind the output to concrete implementations
-    private static List<string> ReferencePaths(string root)
+    private static List<string> ReferencePaths(string root, Action<string>? detail = null, string configuration = "Debug")
     {
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -288,7 +412,7 @@ public static class CompilationFactory
         //Without an ncproj the project is treated as a plain csproj whose references msbuild resolves, which is also the path --no-manifest check takes
         else
         {
-            foreach (var path in CsprojReferences.Assemblies(root))
+            foreach (var path in CsprojReferences.Assemblies(root, configuration, detail))
                 paths.Add(path);
         }
 
@@ -300,7 +424,7 @@ public static class CompilationFactory
         new(StringComparer.OrdinalIgnoreCase);
 
     //Loads reference files into Roslyn metadata references, skipping any that fail to load
-    private static List<MetadataReference> LoadReferences(IReadOnlyList<string> paths)
+    private static List<MetadataReference> LoadReferences(IReadOnlyList<string> paths, Action<string>? detail = null)
     {
         var loaded = new MetadataReference?[paths.Count];
 
@@ -308,6 +432,7 @@ public static class CompilationFactory
         Parallel.For(0, paths.Count, index =>
         {
             var path = paths[index];
+            detail?.Invoke($"loading {Path.GetFileName(path)}");
             if (LoadedReferences.TryGetValue(path, out var cached))
             {
                 loaded[index] = cached;
@@ -332,9 +457,14 @@ public static class CompilationFactory
     }
 
     //Runs the packages' generators and merges their output; the UI InitializeComponent and x:Name members exist only after this step
-    private static Compilation RunGenerators(string root, Compilation compilation, CSharpParseOptions parseOptions)
+    private static Compilation RunGenerators(string root, Compilation compilation, CSharpParseOptions parseOptions,
+        CompileOptions options)
     {
         var analyzers = PackageResolver.Analyzers(root).ToList();
+        //A plain csproj also gets the generators beside the sdk targets, LibraryImport being one a project cannot compile without
+        if (NcProject.TryFind(root, out _) is null)
+            analyzers.AddRange(SdkAnalyzers());
+
         if (analyzers.Count == 0)
             return compilation;
 
@@ -353,15 +483,64 @@ public static class CompilationFactory
             .Select(path => (AdditionalText)new AdditionalFile(path))
             .ToList();
 
-        var driver = CSharpGeneratorDriver.Create(generators, additional, parseOptions, new OptionsProvider());
-        driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out var failures);
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(generators, additional, parseOptions, new OptionsProvider());
+        driver = driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out var failures);
         Trace.Log($"ran {generators.Count} generator(s) over {additional.Count} additional file(s), {failures.Length} diagnostic(s)");
         foreach (var failure in failures)
             Trace.Log($"generator diagnostic {failure.Id}: {failure.GetMessage()}");
 
         foreach (var tree in output.SyntaxTrees.Except(compilation.SyntaxTrees))
             Trace.Log($"generated tree {tree.FilePath}");
+
+        //Writing the trees out is the only way to read generated code, which a broken template needs
+        if (options.EmitCompilerGeneratedFiles)
+            WriteGenerated(root, options.CompilerGeneratedFilesOutputPath, driver);
+
         return output;
+    }
+
+    //WriteGenerated dumps every generated tree under the configured directory, one folder per generator
+    //A write failure only costs the dump, so it is traced instead of aborting the build
+    private static void WriteGenerated(string root, string directory, GeneratorDriver driver)
+    {
+        var folder = Path.GetFullPath(Path.Combine(root,
+            directory.Length > 0 ? directory : Path.Combine(ProjectLayout.Intermediate, "generated")));
+
+        try
+        {
+            foreach (var result in driver.GetRunResult().Results)
+            {
+                var generator = result.Generator.GetType().Name;
+                foreach (var source in result.GeneratedSources)
+                {
+                    var path = Path.Combine(folder, generator, source.HintName);
+                    Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                    File.WriteAllText(path, source.SourceText.ToString());
+                }
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Trace.Log($"cannot write generated sources to {folder}: {e.Message}");
+        }
+    }
+
+    //SdkAnalyzers the analyzer and generator assemblies a csharp project compiles with besides its packages
+    //The sdk folder carries the code analysis rules and the targeting pack carries the interop generators
+    private static IEnumerable<string> SdkAnalyzers()
+    {
+        if (Tools.MsBuildLibrary.SdkDirectory is { } sdk)
+        {
+            var folder = Path.Combine(sdk, "Sdks", "Microsoft.NET.Sdk", "analyzers");
+            if (Directory.Exists(folder))
+            {
+                foreach (var path in Directory.EnumerateFiles(folder, "*.dll"))
+                    yield return path;
+            }
+        }
+
+        foreach (var path in RefPack.Analyzers())
+            yield return path;
     }
 
     //Picks generators out of an analyzer assembly; only parameterless constructors qualify since that is how Roslyn instantiates them
@@ -391,11 +570,15 @@ public static class CompilationFactory
 
         foreach (var type in types)
         {
-            if (type.IsAbstract || type.IsInterface || type.GetConstructor(Type.EmptyTypes) is null)
+            if (type.IsAbstract || type.IsInterface)
                 continue;
 
             try
             {
+                //a type built against another roslyn can fail as early as reading its constructor signature
+                if (type.GetConstructor(Type.EmptyTypes) is null)
+                    continue;
+
                 if (typeof(IIncrementalGenerator).IsAssignableFrom(type))
                     generators.Add(((IIncrementalGenerator)Activator.CreateInstance(type)!).AsSourceGenerator());
                 else if (typeof(ISourceGenerator).IsAssignableFrom(type))

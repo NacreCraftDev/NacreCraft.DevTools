@@ -25,6 +25,8 @@ internal static class ModStaging
             StageModApi(projectRoot, mods);
 
         //Diagnose and build, collect the output into the project's Build and move it all into mods
+        //The build is a nested run, so it reports through plain lines while this task keeps the row
+        Progress.Detail("building mod");
         if (BuildTool.Run([]) != 0)
             return false;
 
@@ -42,7 +44,7 @@ internal static class ModStaging
         }
 
         File.Copy(source, Path.Combine(mods, ModApiFileName), overwrite: true);
-        Console.WriteLine($"Staged {ModApiFileName} to {mods}");
+        Progress.WriteLine($"Staged {ModApiFileName} to {mods}");
     }
 
     //StageBuildOutput moves the mod output into mods
@@ -53,7 +55,7 @@ internal static class ModStaging
         var output = BuildTool.OutputPath(projectRoot);
         if (!Directory.Exists(output))
         {
-            Console.WriteLine($"error: no build output at {output}");
+            Progress.WriteLine($"error: no build output at {output}");
             return false;
         }
 
@@ -67,7 +69,7 @@ internal static class ModStaging
             copied++;
         }
 
-        Console.WriteLine($"Staged {copied} mod assembly(ies) to {mods}");
+        Progress.WriteLine($"Staged {copied} mod assembly(ies) to {mods}");
         return true;
     }
 }

@@ -1,7 +1,6 @@
 using NacreCraft.ModBuild.Compile;
 using NacreCraft.ModBuild.Core;
 using NacreCraft.ModBuild.Diagnostics;
-using Spectre.Console;
 
 namespace NacreCraft.ModBuild.Tools;
 
@@ -226,23 +225,13 @@ internal static class TaintTool
 
         ProjectCompilation? project = null;
         var failure = string.Empty;
-        if (!Console.IsOutputRedirected && !Console.IsErrorRedirected)
+        Progress.Run(_ =>
         {
-            AnsiConsole.Progress()
-                .AutoClear(true)
-                .Columns(new ScanColumn())
-                .Start(context =>
-                {
-                    var compile = context.AddTask("scanning", maxValue: 100);
-                    project = CompilationFactory.Create(rootDirectory, compileOptions, out failure,
-                        (done, total, file) => Update(compile, done, total, file, rootDirectory));
-                    context.RemoveTask(compile);
-                });
-        }
-        else
-        {
-            project = CompilationFactory.Create(rootDirectory, compileOptions, out failure);
-        }
+            Progress.SetTotal(1);
+            Progress.Enter("parse", 1, "scanning sources");
+            project = CompilationFactory.Create(rootDirectory, compileOptions, out failure,
+                Progress.Scanner(rootDirectory), Progress.Detail);
+        });
 
         if (project is null)
         {
@@ -283,7 +272,7 @@ internal static class TaintTool
 
         var options = new TaintOptions(roots, classes, methods, rules, depth, interprocedural, fields, external,
             maxPaths, true, rootParameters);
-        var paths = TaintAnalysis.Analyze(project.Compilation, sources, options, out var error);
+        var paths = TaintAnalysis.Analyze(project.Compilation, sources, options, out var error, out var sinks);
         if (error.Length > 0)
         {
             Error(error);
@@ -294,7 +283,7 @@ internal static class TaintTool
             && !Console.IsOutputRedirected
             && !noColor
             && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("NO_COLOR"));
-        var text = Render(paths, rootDirectory, color);
+        var text = Render(paths, sinks, rootDirectory, color);
 
         if (output is null)
         {
@@ -312,14 +301,14 @@ internal static class TaintTool
         return 0;
     }
 
-    private static string Render(IReadOnlyList<TaintPath> paths, string rootDirectory, bool color)
+    private static string Render(IReadOnlyList<TaintPath> paths, int sinks, string rootDirectory, bool color)
     {
         var text = new System.Text.StringBuilder();
         text.AppendLine(Paint($"taint for {rootDirectory}", HeaderColor, color));
         if (paths.Count == 0)
         {
             text.AppendLine();
-            text.AppendLine(Paint("  no taint path found", DimColor, color));
+            text.AppendLine(Paint(sinks == 0 ? "  no sink matched" : "  no taint path found", DimColor, color));
             return text.ToString();
         }
 
@@ -342,15 +331,6 @@ internal static class TaintTool
     private static void Usage()
         => Console.WriteLine(
             "Usage: ncm taint [-p|--project <dir>] [-f|--file <path>] [-c|--class <name>] [-m|--method <name>] [-r|--root <method>] [--root-parameter <name>] [--source <pattern>] [--sink <pattern>] [--sanitizer <pattern>] [--rules <file>] [--depth <n>] [--interprocedural none|summary] [--no-fields] [--no-external] [--max-paths <n>] [--no-ncproj] [--exclude <pattern>] [--no-color] [-o|--output <file>]");
-
-    private static void Update(ProgressTask task, int done, int total, string file, string rootDirectory)
-    {
-        task.MaxValue = Math.Max(1, total);
-        task.Value = done;
-        task.Description = file.Length == 0
-            ? string.Empty
-            : Path.GetRelativePath(rootDirectory, file).Replace('\\', '/');
-    }
 
     private static bool Value(string[] args, ref int index, out string value)
     {

@@ -16,20 +16,22 @@ public enum Applicability
 //Suggestion one fix suggestion
 //one carrying a Replacement renders as corrected code while a message-only one is plain text
 //positions use 1-based line and column to match Diagnostic
+//DiagnosticMessage replaces the compiler's own wording when that wording contradicts the suggestion
 public sealed record Suggestion(
     string Message,
     int Line,
     int Column,
     int Length,
     string? Replacement,
-    Applicability Applicability)
+    Applicability Applicability,
+    string? DiagnosticMessage = null)
 {
     //Replaceable reports whether this suggestion can supply replacement text
     public bool Replaceable => Replacement is not null && Length > 0;
 
     //Text builds a plain-text suggestion with no location in the source
-    public static Suggestion Text(string message)
-        => new(message, 0, 0, 0, null, Applicability.Unspecified);
+    public static Suggestion Text(string message, string? diagnosticMessage = null)
+        => new(message, 0, 0, 0, null, Applicability.Unspecified, diagnosticMessage);
 
     //Replace builds a replacement suggestion pointing at a span of a line
     public static Suggestion Replace(

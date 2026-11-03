@@ -11,10 +11,12 @@ internal static class RunClientTool
         => ToolRegistry.Register("runclient", "Build the current mod and run the NacreCraft client", Run,
         [
             new(RunArguments.RefreshOption, "Refresh the kernel cache against the remote index first, outside a mod project the refresh is all that runs"),
+            new(Progress.PlainOption, "Printed one line per step instead of redrawing, shared by every tool that draws progress"),
             new("[client args]", "Everything after runclient is passed to the client unchanged"),
         ]);
 
     //Run prepares the kernel, the client jar and the shared resources, stages the mod and hands off to the launcher
+    //The preparation runs under the same progress line the build uses, so a download and a step never fight over the row
     private static int Run(string[] args)
     {
         var config = NcProject.TryFind(Environment.CurrentDirectory, out var configError);
@@ -34,17 +36,29 @@ internal static class RunClientTool
         if (Launcher.Launched)
             return Launcher.Launch(WithResources(Combine(config, args)), LaunchTarget.Client, RuntimeSource());
 
+        var (code, prepared) = Progress.Run(session => Prepare(session, config, args));
+        return prepared is null ? code : Launcher.Launch(prepared, LaunchTarget.Client, RuntimeSource());
+    }
+
+    //Prepare brings up everything a launch reads, one task per kind of file
+    //The launch itself stays outside, since the kernel may restart this process before the call ever returns
+    private static (int Code, string[]? Launch) Prepare(ProgressSession session, NcProject? config, string[] args)
+    {
         var refresh = Array.IndexOf(args, RunArguments.RefreshOption) >= 0;
+        Progress.SetTotal(4);
+
+        var client = session.Add("client", 1, "runtime");
+        //the client needs the shared files plus its own half, not the server ones
         if (refresh)
         {
-            //the client needs the shared files plus its own half, not the server ones
             if (!RuntimeStore.Refresh(RuntimeSide.Client))
-                return 1;
+                return (1, null);
         }
         else if (!RuntimeStore.Ensure(RuntimeSide.Client))
         {
-            return 1;
+            return (1, null);
         }
+        client.Step("runtime");
 
         //Check for the run directory before staging, since staging creates it
         var firstRun = !Directory.Exists(Launcher.RunDirectory);
@@ -55,37 +69,42 @@ internal static class RunClientTool
         if (project is null)
         {
             if (refresh)
-                return Launcher.Launch(WithResources(arguments), LaunchTarget.Client, RuntimeSource());
+                return (0, WithResources(arguments));
 
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"error: no {ModProject.ManifestName} in this directory or any parent");
-            Console.ResetColor();
-            return 1;
+            Progress.WriteLine($"error: no {ModProject.ManifestName} in this directory or any parent");
+            return (1, null);
         }
 
         //The jar carries most of the resources while the index-driven objects fill in what it leaves out
+        var jarTask = session.Add("jar", 1, "client jar");
         var jar = ClientStore.Ensure();
         if (jar is null)
-            return 1;
+            return (1, null);
+        jarTask.Step("client jar");
 
         //The objects are shared between every project, so only the missing ones are fetched
+        var assets = session.Add("assets", 2, "index");
         if (AssetsStore.Ensure() is null)
-            return 1;
+            return (1, null);
+        assets.Step("index");
 
         //Sounds are not among what the kernel lands from the index, so they are handed over as a directory instead
         var sounds = AssetsStore.EnsureSounds();
+        assets.Step("sounds");
 
+        var stage = session.Add("stage", 1, "mods");
         var root = Path.GetDirectoryName(project.ManifestPath)!;
         if (!ModStaging.Stage(root, Launcher.RunDirectory,
             config?.Build.DependsOnModApi ?? NcBuild.DefaultDependsOnModApi))
-            return 1;
+            return (1, null);
+        stage.Step("mods");
 
         var prepared = WithResources(arguments, AssetsStore.Root, AssetsStore.IndexId, sounds);
         //The jar is only pointed at on the first launch, since the extracted assets stay in run afterwards
         if (firstRun)
             prepared = RunArguments.WithOption(prepared, "--jar-path", jar);
 
-        return Launcher.Launch(prepared, LaunchTarget.Client, RuntimeSource());
+        return (0, prepared);
     }
 
     //RuntimeSource the directory the launcher loads from, with the shared files merged under the client ones
@@ -108,5 +127,5 @@ internal static class RunClientTool
 
     //Combine the client section of the config with the user's arguments
     private static string[] Combine(NcProject? config, string[] args)
-        => RunArguments.Combine(config?.Client.Args ?? string.Empty, false, RunArguments.WithoutRefresh(args));
+        => RunArguments.Combine(config?.Client.Args ?? string.Empty, false, RunArguments.WithoutLocalSwitches(args));
 }

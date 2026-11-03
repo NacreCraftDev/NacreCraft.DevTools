@@ -30,6 +30,7 @@ internal static class BuildTool
             new("--no-manifest", "Skip the ncmod.json lookup, treat the current directory as a plain C# project (must contain a csproj)"),
             new("--lint", "Run the Roslynator code quality rules in addition to the api and syntax checks"),
             new("--taint", "Follow untrusted input to dangerous apis after the regular checks"),
+            new(Progress.PlainOption, "Printed one line per step instead of redrawing, shared by every tool that draws progress"),
         ]);
 
     //Run parses the arguments, diagnoses, builds and collects the output
@@ -73,7 +74,7 @@ internal static class BuildTool
                     break;
                 default:
                     Console.WriteLine($"error: unknown build option {args[index]}");
-                    Console.WriteLine("Usage: ncm build [-c|--configuration <name>] [--no-check] [--check-only] [--no-manifest] [--lint] [--taint]");
+                    Console.WriteLine("Usage: ncm build [-c|--configuration <name>] [--no-check] [--check-only] [--no-manifest] [--lint] [--taint] [--plain]");
                     return 1;
             }
         }
@@ -111,8 +112,9 @@ internal static class BuildTool
         var display = project?.DisplayName ?? new DirectoryInfo(root).Name;
 
         var action = checkOnly ? "Checking" : "Building";
-        Console.WriteLine($"{action} {display} ({configuration})");
-        Console.WriteLine();
+        //a run tool builds the mod from inside its own task list, so this line has to clear the row first
+        Progress.WriteLine($"{action} {display} ({configuration})");
+        Progress.WriteLine(string.Empty);
 
         //A broken config must be reported so nobody mistakes it for default settings
         var config = NcProject.TryFind(root, out var configError);
@@ -127,90 +129,128 @@ internal static class BuildTool
         //Exclusions apply to the source scan, so they have to be in place before anything enumerates
         SourceFiles.Configure(config);
 
-        //The direct build and the checks both need references, so kernel assemblies and packages come first
-        if (config is not null && !Prepare(root, config))
-            return 1;
+        return Progress.Run(session =>
+        {
+            var stages = 0;
+            if (config is not null)
+                stages++;
+            if (check)
+                stages += 2;
+            if (!checkOnly)
+                stages++;
+            if (!checkOnly && config is not null)
+                stages++;
+            if (!checkOnly && config is { DeployTargets.Count: > 0 })
+                stages++;
+            Progress.SetTotal(Math.Max(1, stages));
 
-        ProjectCompilation? compiled = null;
-        if (check && !RunChecks(root, config, project, lint, taint, out compiled))
-            return 1;
+            //The direct build and the checks both need references, so kernel assemblies and packages come first
+            if (config is not null && !Prepare(session, root, config))
+                return 1;
 
-        //Check-only stops here and leaves no build output
-        if (checkOnly)
-            return 0;
+            ProjectCompilation? compiled = null;
+            if (check && !RunChecks(root, config, project, lint, taint, configuration, out compiled))
+                return 1;
 
-        //A project with ncproj builds through Roslyn, one without still goes to dotnet
-        if (config is not null)
-            return RunRoslynBuild(root, config, compiled);
+            //Check-only stops here and leaves no build output
+            if (checkOnly)
+                return 0;
 
-        if (!RunDotnetBuild(root, configuration))
-            return 1;
+            //A project with ncproj builds through Roslyn, one without still goes to dotnet
+            if (config is not null)
+                return RunRoslynBuild(session, root, config, compiled);
 
-        return CollectOutput(root, configuration);
+            if (!RunDotnetBuild(session, root, configuration))
+                return 1;
+
+            return CollectOutput(root, configuration);
+        });
     }
 
     //Prepare readies what the direct build needs: kernel assemblies, declared packages and project reference outputs
-    //Each one is fetched only when missing, present files are skipped to avoid the network and re-downloads
+    //A caller without a task list of its own gets a bare session; outside a running task list it draws nothing
     internal static bool Prepare(string root, NcProject config)
+        => Prepare(new ProgressSession(), root, config);
+
+    //Prepare readies what the direct build needs: kernel assemblies, declared packages and project reference outputs
+    //Each one is fetched only when missing, present files are skipped to avoid the network and re-downloads
+    internal static bool Prepare(ProgressSession session, string root, NcProject config)
     {
+        var restore = session.Add("restore", 2 + config.Packages.Count, "kernel");
+
         if (!KernelStore.Sync(root, config))
             return false;
 
+        restore.Step("kernel");
         if (!RestoreTool.Ensure(config, RestoreTool.DirectoryOf(config), out var error))
         {
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"error: {error}");
+            Progress.WriteLine($"error: {error}");
             Console.ResetColor();
             return false;
         }
 
         //Project references are resolved once here, the build and checks then read from the cache
+        restore.Step("references");
         ProjectReferences.Clear();
         if (ProjectReferences.Build(root, config, out var referenceError))
             return true;
 
         Console.ForegroundColor = ConsoleColor.Red;
-        Console.WriteLine($"error: {referenceError}");
+        Progress.WriteLine($"error: {referenceError}");
         Console.ResetColor();
         return false;
     }
 
     //RunRoslynBuild compiles the mod assembly with Roslyn, bypassing dotnet and MSBuild projects
     //Whether to compile is decided by timestamps in the compiler, this only reports the result
-    private static int RunRoslynBuild(string root, NcProject config, ProjectCompilation? compiled)
+    private static int RunRoslynBuild(ProgressSession session, string root, NcProject config,
+        ProjectCompilation? compiled)
     {
         var name = config.AssemblyNameOf(root);
         var target = Path.Combine(root, config.Build.Output, name + ".dll");
 
+        var compile = session.Add("compile", 1, name + ".dll");
         if (!Compiler.Compile(root, config, name, target, compiled, out var error))
         {
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"error: {error}");
+            Progress.WriteLine($"error: {error}");
             Console.ResetColor();
             return 1;
         }
 
+        compile.Step(name + ".dll");
+
         //Package targets run after compilation, which is the step UI library templates rely on
+        //The stage covers two steps: composing the project the engine evaluates, then running the targets themselves
+        var targets = session.Add("targets", 2, "compose project");
         if (!TargetRunner.Run(root, config, target, out var targetError))
         {
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"error: {targetError}");
+            Progress.WriteLine($"error: {targetError}");
             Console.ResetColor();
             return 1;
         }
 
-        return Deploy(root, config, target) ? 0 : 1;
+        targets.Step("package targets");
+
+        return Deploy(session, root, config, target) ? 0 : 1;
     }
 
     //Deploy copies the output to every configured host directory
     //This is what the old DeployModToHosts target did, it does nothing when no host is configured
-    private static bool Deploy(string root, NcProject config, string target)
+    private static bool Deploy(ProgressSession session, string root, NcProject config, string target)
     {
+        if (config.DeployTargets.Count == 0)
+            return true;
+
+        var deploy = session.Add("deploy", config.DeployTargets.Count, "deploy");
         var ok = true;
         foreach (var entry in config.DeployTargets)
         {
             var directory = Path.GetFullPath(Path.Combine(root, entry));
             var destination = Path.Combine(directory, Path.GetFileName(target));
+            deploy.Step(directory);
 
             try
             {
@@ -222,11 +262,11 @@ internal static class BuildTool
 
                 Directory.CreateDirectory(directory);
                 File.Copy(target, destination, overwrite: true);
-                Console.WriteLine($"Deployed to {destination}");
+                Progress.WriteLine($"Deployed to {destination}");
             }
             catch (IOException e)
             {
-                Console.WriteLine($"error: cannot deploy to {directory}: {e.Message}");
+                Progress.WriteLine($"error: cannot deploy to {directory}: {e.Message}");
                 ok = false;
             }
         }
@@ -242,24 +282,28 @@ internal static class BuildTool
     //Compile settings follow the project config so a passing check does not fail later on a different language version
     //The compilation it already built is handed back, since the build emits the very same trees
     private static bool RunChecks(string root, NcProject? config, ModProject? manifest, bool lint, bool taint,
-        out ProjectCompilation? compiled)
+        string configuration, out ProjectCompilation? compiled)
     {
         compiled = null;
         var bag = new DiagnosticBag();
         var covered = new HashSet<string>(StringComparer.Ordinal);
 
-        //The template directory source follows the project config, needed for mirror environments
+        //The catalog lists the api a mod may call, so a project without a manifest has nothing to compare against
+        //Only the compiler decides what a plain project may use, which is what --no-manifest asks for
         TemplateStore.Configure(config);
-        var catalog = TemplateStore.LoadCatalog();
-        if (catalog is null)
-            Console.WriteLine("warning: template catalog is unavailable, the mod api check is skipped");
-        else
-            covered = ModApiAnalyzer.Analyze(root, catalog, bag);
+        var catalog = manifest is null ? null : TemplateStore.LoadCatalog();
+        if (manifest is not null)
+        {
+            if (catalog is null)
+                Progress.WriteLine("warning: template catalog is unavailable, the mod api check is skipped");
+            else
+                covered = ModApiAnalyzer.Analyze(root, catalog, bag);
+        }
 
         var options = config is null
-            ? CompileOptions.Default with { Lint = lint, Taint = taint }
+            ? CsprojOptions.Of(root, configuration, lint, taint)
             : CompileOptions.From(config, config.AssemblyNameOf(root), lint, taint);
-        var project = CSharpAnalyzer.Analyze(root, options, bag, covered);
+        var project = CSharpAnalyzer.Analyze(root, options, bag, covered, configuration);
         compiled = project;
 
         //The injection rules are checked against the same references the runtime uses, so a rule an outdated mod api
@@ -273,12 +317,12 @@ internal static class BuildTool
         if (!bag.HasErrors)
         {
             if (bag.WarningCount > 0)
-                Console.WriteLine($"{bag.WarningCount} warning(s)");
+                Progress.WriteLine($"{bag.WarningCount} warning(s)");
             return true;
         }
 
         Console.ForegroundColor = ConsoleColor.Red;
-        Console.WriteLine($"error: build aborted, {bag.ErrorCount} error(s) found before compiling");
+        Progress.WriteLine($"error: build aborted, {bag.ErrorCount} error(s) found before compiling");
         Console.ResetColor();
         return false;
     }
@@ -289,7 +333,7 @@ internal static class BuildTool
     {
         if (manifest is null)
         {
-            Console.WriteLine("note: no manifest here, the injection rules were not checked");
+            Progress.WriteLine("note: no manifest here, the injection rules were not checked");
             return;
         }
 
@@ -298,7 +342,7 @@ internal static class BuildTool
 
         if (project is null)
         {
-            Console.WriteLine("warning: the injection rules were not checked, the sources did not compile");
+            Progress.WriteLine("warning: the injection rules were not checked, the sources did not compile");
             return;
         }
 
@@ -311,34 +355,23 @@ internal static class BuildTool
 
     //RunDotnetBuild hands off to the real build with output straight to the console
     //Compile errors are already caught earlier, so a failure here is likely environmental and the raw output is more useful
-    private static bool RunDotnetBuild(string root, string configuration)
+    private static bool RunDotnetBuild(ProgressSession session, string root, string configuration)
     {
-        var startInfo = new ProcessStartInfo("dotnet")
-        {
-            WorkingDirectory = root,
-        };
-        //ncm output is English only, keep the child process from following the system language
-        startInfo.Environment["DOTNET_CLI_UI_LANGUAGE"] = "en";
-        startInfo.ArgumentList.Add("build");
-        startInfo.ArgumentList.Add("--configuration");
-        startInfo.ArgumentList.Add(configuration);
-        startInfo.ArgumentList.Add("--nologo");
+        //a whole dotnet build has no steps this tool can count, so the row runs the moving bar instead of a fill
+        var compile = session.Add("compile", 0, "dotnet build");
 
-        using var process = Process.Start(startInfo);
-        if (process is null)
+        //the child process output stays off the progress line unless it fails, or the line would be cut in half
+        if (!DotnetRunner.Run(root, ["build", "--configuration", configuration, "--nologo"],
+                Progress.Plain, Progress.Break, out var exitCode))
         {
-            Console.WriteLine("error: could not start dotnet");
+            Console.ForegroundColor = ConsoleColor.Red;
+            Progress.WriteLine($"error: dotnet build exited with code {exitCode}");
+            Console.ResetColor();
             return false;
         }
 
-        process.WaitForExit();
-        if (process.ExitCode == 0)
-            return true;
-
-        Console.ForegroundColor = ConsoleColor.Red;
-        Console.WriteLine($"error: dotnet build exited with code {process.ExitCode}");
-        Console.ResetColor();
-        return false;
+        compile.Step("dotnet build");
+        return true;
     }
 
     //CollectOutput collects the build output into Build/ under the project root
@@ -347,7 +380,7 @@ internal static class BuildTool
         var output = FindOutputDirectory(root, configuration);
         if (output is null)
         {
-            Console.WriteLine($"error: no build output under bin/{configuration}");
+            Progress.WriteLine($"error: no build output under bin/{configuration}");
             return 1;
         }
 
@@ -365,7 +398,7 @@ internal static class BuildTool
         }
 
         Console.ForegroundColor = ConsoleColor.Green;
-        Console.WriteLine($"Finished {configuration} build, {copied} file(s) copied to {target}");
+        Progress.WriteLine($"Finished {configuration} build, {copied} file(s) copied to {target}");
         Console.ResetColor();
         return 0;
     }

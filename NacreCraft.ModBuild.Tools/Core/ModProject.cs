@@ -1,4 +1,5 @@
 using Newtonsoft.Json;
+using NacreCraft.ModBuild.Tools;
 using Newtonsoft.Json.Linq;
 
 namespace NacreCraft.ModBuild.Core;
@@ -98,7 +99,7 @@ public sealed class ModProject
 
         _reported = message;
         Console.ForegroundColor = ConsoleColor.Red;
-        Console.WriteLine(message);
+        Progress.WriteLine(message);
         Console.ResetColor();
     }
 

@@ -20,9 +20,10 @@ internal static class RunArguments
         return combined.ToArray();
     }
 
-    //Drop ncm's own switch before the kernel sees the arguments
-    public static string[] WithoutRefresh(string[] args)
-        => args.Where(arg => arg != RefreshOption).ToArray();
+    //Drop the switches ncm answers itself before the kernel sees the arguments
+    //--plain belongs to the progress component, --refresh to the run tools
+    public static string[] WithoutLocalSwitches(string[] args)
+        => args.Where(arg => arg != RefreshOption && arg != Progress.PlainOption).ToArray();
 
     //Append a kernel option unless the user already passed it, so their value stays in place
     public static string[] WithOption(string[] args, string name, string? value)

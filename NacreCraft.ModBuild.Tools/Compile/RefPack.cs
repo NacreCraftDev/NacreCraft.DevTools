@@ -13,6 +13,9 @@ internal static class RefPack
     //Located once so repeated compilations in one process do not rescan the directory
     private static IReadOnlyList<string>? _cache;
 
+    //Same for the analyzers beside the pack, which are read by the generator pass
+    private static IReadOnlyList<string>? _analyzers;
+
     //Reference assemblies for the current target framework, or empty when none are found
     public static IReadOnlyList<string> Assemblies()
     {
@@ -21,6 +24,16 @@ internal static class RefPack
 
         _cache = Locate();
         return _cache;
+    }
+
+    //Analyzer and generator assemblies of the same pack, which is where the interop generators ship
+    public static IReadOnlyList<string> Analyzers()
+    {
+        if (_analyzers is not null)
+            return _analyzers;
+
+        _analyzers = LocateAnalyzers();
+        return _analyzers;
     }
 
     private static IReadOnlyList<string> Locate()
@@ -59,6 +72,37 @@ internal static class RefPack
         }
 
         Trace.Log($"no ref/{framework} under {pack}");
+        return [];
+    }
+
+    //LocateAnalyzers reads the analyzers of the pack version whose reference assemblies are being used
+    //Only the top level of the folder holds assemblies, the subfolders are the localized resource copies
+    private static IReadOnlyList<string> LocateAnalyzers()
+    {
+        var root = DotnetRoot();
+        if (root is null)
+            return [];
+
+        var pack = Path.Combine(root, "packs", PackName);
+        if (!Directory.Exists(pack))
+            return [];
+
+        var framework = TargetFramework();
+        foreach (var candidate in Directory.GetDirectories(pack)
+                     .OrderByDescending(path => ParseVersion(Path.GetFileName(path))))
+        {
+            if (!Directory.Exists(Path.Combine(candidate, "ref", framework)))
+                continue;
+
+            var analyzers = Path.Combine(candidate, "analyzers", "dotnet", "cs");
+            if (!Directory.Exists(analyzers))
+                continue;
+
+            var files = Directory.EnumerateFiles(analyzers, "*.dll").ToList();
+            Trace.Log($"pack analyzers {analyzers} ({files.Count} assemblies)");
+            return files;
+        }
+
         return [];
     }
 

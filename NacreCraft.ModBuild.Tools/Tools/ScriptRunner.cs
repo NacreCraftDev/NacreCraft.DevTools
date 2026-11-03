@@ -135,7 +135,7 @@ public sealed class ScriptBuild
         output = build.Output;
         outputType = build.OutputType;
         nullable = build.Nullable;
-        allowUnsafe = build.AllowUnsafe;
+        allowUnsafe = build.AllowUnsafeBlocks;
         this.langVersion = langVersion;
     }
 

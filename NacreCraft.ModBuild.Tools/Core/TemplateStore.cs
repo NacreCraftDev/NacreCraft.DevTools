@@ -1,3 +1,5 @@
+using NacreCraft.ModBuild.Tools;
+
 namespace NacreCraft.ModBuild.Core;
 
 //Local cache of template assets under the user cache; the catalog only hits the network when missing locally and example files are cache-first too
@@ -55,10 +57,10 @@ public static class TemplateStore
                 return null;
             }
 
-            Console.WriteLine($"Template cache is empty, downloading {CatalogFileName}");
+            Progress.WriteLine($"Template cache is empty, downloading {CatalogFileName}");
             if (!TryDownload(CatalogUrl, CatalogPath, out var error))
             {
-                Console.WriteLine($"Failed to download {CatalogUrl}: {error}");
+                Progress.WriteLine($"Failed to download {CatalogUrl}: {error}");
                 return null;
             }
         }

@@ -9,21 +9,25 @@ public static class Help
     public const string Usage = "ncm <tool> [options]";
 
     //Print every tool with its one-line description, plus the current project's own tasks when inside one
-    public static void Print(TextWriter writer)
+    //program names the command line being described, so an alternate entry point does not tell readers to run ncm
+    public static void Print(TextWriter writer, string program = "ncm")
     {
         writer.WriteLine("NacreCraft mod development tools");
         writer.WriteLine();
-        writer.WriteLine($"Usage: {Usage}");
+        writer.WriteLine($"Usage: {program} <tool> [options]");
         writer.WriteLine();
         writer.WriteLine("Tools:");
+
+        //the column follows the longest name, since names such as java-callgraph no longer fit the old fixed width
+        var width = Math.Max(12, ToolRegistry.All.Select(tool => tool.Name.Length).DefaultIfEmpty(0).Max() + 2);
         foreach (var tool in ToolRegistry.All)
-            writer.WriteLine($"  {tool.Name,-12} {tool.Description}");
+            writer.WriteLine($"  {tool.Name.PadRight(width)} {tool.Description}");
 
         WriteProjectTasks(writer);
         WriteGlobalTasks(writer);
 
         writer.WriteLine();
-        writer.WriteLine("Run 'ncm help <tool>' to see the parameters of one tool, or 'ncm help all' for every tool.");
+        writer.WriteLine($"Run '{program} help <tool>' to see the parameters of one tool, or '{program} help all' for every tool.");
     }
 
     //PrintAll every registered tool's full help, the same text as running ncm help <tool> one by one

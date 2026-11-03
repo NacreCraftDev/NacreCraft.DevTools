@@ -3,7 +3,6 @@ using System.Xml;
 using Microsoft.Build.Construction;
 using Microsoft.Build.Evaluation;
 using Microsoft.Build.Framework;
-using Microsoft.Build.Logging;
 using NacreCraft.ModBuild.Compile;
 using NacreCraft.ModBuild.Core;
 using NacreCraft.ModBuild.Diagnostics;
@@ -28,7 +27,7 @@ internal static class TargetRunner
         //The engine follows the local sdk, so a machine without one skips this layer instead of failing the whole build
         if (!MsBuildLibrary.Attach(out var engineError))
         {
-            Console.WriteLine($"warning: {engineError}, the targets of the packages are skipped");
+            Progress.WriteLine($"warning: {engineError}, the targets of the packages are skipped");
             return true;
         }
 
@@ -36,6 +35,8 @@ internal static class TargetRunner
         {
             Sdks();
             var xml = Compose(root, project, assembly);
+            //Composing the project is a visible step of its own, the engine work follows it
+            Progress.Step("compose project");
             Trace.Log(xml);
 
             using var reader = XmlReader.Create(new StringReader(xml));
@@ -44,7 +45,10 @@ internal static class TargetRunner
 
             var collection = new ProjectCollection();
             var evaluated = new Project(element, globalProperties: null, toolsVersion: null, projectCollection: collection);
-            var logger = new ConsoleLogger(LoggerVerbosity.Normal);
+
+            //the engine is never allowed to write its own log: a target that succeeds stays silent, and one that fails
+            //hands the errors back so they are printed under the progress line instead of through it
+            var logger = new CollectingLogger();
 
             var ran = 0;
             foreach (var target in PostBuildTargets)
@@ -52,10 +56,12 @@ internal static class TargetRunner
                 if (!evaluated.Targets.Any(item => item.Key == target))
                     continue;
 
-                Console.WriteLine($"Running target {target}");
+                Progress.Detail(target);
                 if (!evaluated.Build(target, [logger]))
                 {
-                    error = $"target {target} failed";
+                    error = logger.Errors.Count > 0
+                        ? string.Join(Environment.NewLine, logger.Errors)
+                        : $"target {target} failed";
                     return false;
                 }
 
@@ -75,6 +81,8 @@ internal static class TargetRunner
 
     //Composes the in-memory project
     //Properties and items mirror the direct build so references come from the precomputed list instead of package restore
+    //The Sdk attribute stays: the engine and the sdk props and targets ship with the tool, which is what lets a package
+    //target see the same evaluated context it would see under dotnet build
     private static string Compose(string root, NcProject project, string assembly)
     {
         var name = AssemblyName(root, project);
@@ -86,6 +94,27 @@ internal static class TargetRunner
         builder.AppendLine($"    <Configuration>{project.Build.Configuration}</Configuration>");
         builder.AppendLine($"    <AssemblyName>{Escape(name)}</AssemblyName>");
         builder.AppendLine($"    <RootNamespace>{Escape(RootNamespace(project, name))}</RootNamespace>");
+
+        //The same switches the direct build uses, so a package target sees one project instead of two different ones
+        builder.AppendLine($"    <LangVersion>{Escape(project.Check.LangVersion)}</LangVersion>");
+        builder.AppendLine($"    <DefineConstants>{Escape(project.Build.DefineConstants)}</DefineConstants>");
+        builder.AppendLine($"    <Nullable>{(project.Build.Nullable ? "enable" : "disable")}</Nullable>");
+        builder.AppendLine($"    <AllowUnsafeBlocks>{Flag(project.Build.AllowUnsafeBlocks)}</AllowUnsafeBlocks>");
+        builder.AppendLine($"    <Optimize>{Flag(project.Build.Optimize)}</Optimize>");
+        builder.AppendLine($"    <CheckForOverflowUnderflow>{Flag(project.Build.CheckForOverflowUnderflow)}</CheckForOverflowUnderflow>");
+        builder.AppendLine($"    <PlatformTarget>{Escape(project.Build.PlatformTarget)}</PlatformTarget>");
+        builder.AppendLine($"    <WarningLevel>{project.Build.WarningLevel}</WarningLevel>");
+        builder.AppendLine($"    <NoWarn>{Escape(project.Build.NoWarn)}</NoWarn>");
+        builder.AppendLine($"    <WarningsAsErrors>{Escape(project.Build.WarningsAsErrors)}</WarningsAsErrors>");
+        builder.AppendLine($"    <WarningsNotAsErrors>{Escape(project.Build.WarningsNotAsErrors)}</WarningsNotAsErrors>");
+        builder.AppendLine($"    <TreatWarningsAsErrors>{Flag(project.Build.TreatWarningsAsErrors)}</TreatWarningsAsErrors>");
+        builder.AppendLine($"    <Deterministic>{Flag(project.Build.Deterministic)}</Deterministic>");
+        builder.AppendLine($"    <DebugType>{Escape(project.Build.DebugType)}</DebugType>");
+        builder.AppendLine($"    <DebugSymbols>{Flag(project.Build.DebugSymbols)}</DebugSymbols>");
+        builder.AppendLine($"    <GenerateDocumentationFile>{Flag(project.Build.GenerateDocumentationFile)}</GenerateDocumentationFile>");
+        builder.AppendLine($"    <EnableNETAnalyzers>{Flag(project.Build.EnableNETAnalyzers)}</EnableNETAnalyzers>");
+        builder.AppendLine($"    <AnalysisLevel>{Escape(project.Build.AnalysisLevel)}</AnalysisLevel>");
+        builder.AppendLine($"    <EnforceCodeStyleInBuild>{Flag(project.Build.EnforceCodeStyleInBuild)}</EnforceCodeStyleInBuild>");
         builder.AppendLine("    <EnableDefaultItems>false</EnableDefaultItems>");
         builder.AppendLine("    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>");
         builder.AppendLine("    <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>");
@@ -109,6 +138,8 @@ internal static class TargetRunner
         foreach (var path in CompilationFactory.References(root))
             builder.AppendLine($"    <Reference Include=\"{Escape(path)}\" />");
 
+        builder.AppendLine("    <ReferencePathWithRefAssemblies Include=\"@(Reference)\" />");
+
         foreach (var file in SourceFiles.Enumerate(root, "*.axaml"))
             builder.AppendLine($"    <AvaloniaXaml Include=\"{Escape(file)}\" />");
         builder.AppendLine("  </ItemGroup>");
@@ -117,9 +148,16 @@ internal static class TargetRunner
         foreach (var import in PackageTargets.Imports(root))
             builder.AppendLine($"  <Import Project=\"{Escape(import)}\" />");
 
+        //The package appends its own dependency chain here, which would resolve targeting packs and project references
+        //this project does not have; the reference list it reads is supplied above, so the chain is cleared after the import
+        builder.AppendLine("  <PropertyGroup>");
+        builder.AppendLine("    <CompileAvaloniaXamlDependsOn></CompileAvaloniaXamlDependsOn>");
+        builder.AppendLine("  </PropertyGroup>");
+
         //Stage the assembly wherever the sdk expects intermediates instead of guessing its directory layout
         builder.AppendLine("""
               <Target Name="NcmStageAssembly" BeforeTargets="CompileAvaloniaXaml">
+                <MakeDir Directories="$(IntermediateOutputPath)Avalonia" />
                 <Copy SourceFiles="$(NcmAssembly)" DestinationFiles="@(IntermediateAssembly)" SkipUnchangedFiles="false" />
               </Target>
               <Target Name="NcmCollectAssembly" AfterTargets="CompileAvaloniaXaml" Condition="Exists('$(NcmOutput)')">
@@ -145,8 +183,8 @@ internal static class TargetRunner
     private static string RootNamespace(NcProject project, string name)
         => string.IsNullOrWhiteSpace(project.Build.RootNamespace) ? name : project.Build.RootNamespace;
 
-    //Points the engine at the local sdk, without which the Sdk attribute cannot be evaluated
-    //The extensions paths must point at the sdk root too so Current\Microsoft.Common.props resolves
+    //Points the engine at the props and targets that ship beside it, without which the Sdk attribute cannot be evaluated
+    //The extensions paths must point at that same root so Microsoft.Common.props resolves, and an already set variable is left alone
     internal static void Sdks()
     {
         var sdk = MsBuildLibrary.SdkDirectory;
@@ -155,15 +193,17 @@ internal static class TargetRunner
 
         var sdkRoot = sdk + Path.DirectorySeparatorChar;
         Keep("MSBuildSDKsPath", Path.Combine(sdk, "Sdks"));
+        //workload resolution needs sdk folders that are not bundled, and a package target never asks for a workload
+        Keep("MSBuildEnableWorkloadResolver", "false");
         Keep("MSBuildExtensionsPath", sdkRoot);
         Keep("MSBuildExtensionsPath32", sdkRoot);
         Keep("MSBuildExtensionsPath64", sdkRoot);
-        //The engine locates SdkResolvers relative to the msbuild assembly, so pointing at the sdk copy makes it accept the sdk directory
+        //The engine locates SdkResolvers relative to the msbuild assembly, so pointing at this copy makes it accept the sdk directory
         var exe = Path.Combine(sdk, "MSBuild.dll");
         if (File.Exists(exe))
             Keep("MSBUILD_EXE_PATH", exe);
 
-        Trace.Log($"sdk {sdk}");
+        Trace.Log($"msbuild root {sdk}");
     }
 
     //Only fills unset variables, leaving already-pointed ones untouched
@@ -175,4 +215,29 @@ internal static class TargetRunner
 
     private static string Escape(string value)
         => value.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;");
+
+    //Flag writes a boolean the way the engine spells it
+    private static string Flag(bool value)
+        => value ? "true" : "false";
+
+    //CollectingLogger keeps the engine quiet and hands the errors back, since the progress line owns the console
+    //A target that succeeds prints nothing; a failed one produces the lines the caller reports
+    private sealed class CollectingLogger : ILogger
+    {
+        private readonly List<string> _errors = new();
+
+        public LoggerVerbosity Verbosity { get; set; } = LoggerVerbosity.Quiet;
+
+        public string? Parameters { get; set; }
+
+        public IReadOnlyList<string> Errors => _errors;
+
+        public void Initialize(IEventSource eventSource)
+            => eventSource.ErrorRaised += (_, e) =>
+                _errors.Add($"{e.File}({e.LineNumber},{e.ColumnNumber}): {e.Code}: {e.Message}");
+
+        public void Shutdown()
+        {
+        }
+    }
 }

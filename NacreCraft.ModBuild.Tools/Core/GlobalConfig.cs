@@ -1,3 +1,5 @@
+using NacreCraft.ModBuild.Tools;
+
 namespace NacreCraft.ModBuild.Core;
 
 //Machine wide defaults, read from Config.ncproj beside the caches
@@ -58,7 +60,7 @@ internal static class GlobalConfig
         if (Loaded is null)
         {
             Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine($"warning: {error}");
+            Progress.WriteLine($"warning: {error}");
             Console.ResetColor();
             return null;
         }

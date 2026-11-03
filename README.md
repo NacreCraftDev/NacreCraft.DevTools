@@ -28,7 +28,7 @@ The install scripts set up everything a mod author needs — the .NET 10 SDK, th
 ./tools/install-linux.sh
 ```
 
-Packages come from nuget.org. Then, from a mod project:
+Packages come from nuget.org unless a `<PackageSource>` names another feed. Then, from a mod project:
 
 ```powershell
 ncm init                        # create a mod project with prompts
@@ -161,14 +161,21 @@ With `--lint` the Roslynator code quality rules run over the same compilation af
 
 With `--taint` every method parameter is treated as untrusted and followed to a dangerous api, which is reported as `NC0005` beside the flat `NC0003` hit. The report carries the call chain, so a value that is only handed to `Marshal` after passing through two helpers no longer looks like a plain api usage.
 
+While it works the build draws one line per stage: the stage counter, a braille spinner, a percentage bar and what the stage is on. A restore names packages, the check names files, the advice pass names the assembly it is reading for a missing using, and the build names the assembly, then the composed project and the package targets. A stage whose length cannot be counted, such as the `dotnet build` handoff, draws a run of hashes sliding one cell per frame across the bar and wrapping around to the left edge once it reaches the right one, reporting `??%` instead of a filling bar; the run keeps its width the whole time, so it never reads as a bar filling up. It closes at 100% like any other stage once it finishes. Each repaint is written as a single call wrapped in the terminal's synchronized-output pair, and a repaint that would change nothing is skipped, so the row stays still instead of flickering. Messages printed mid stage clear the line first, so a note never lands under the bar. `--plain` is shared by every tool that draws progress — it is taken out of the command line before the tool or the kernel sees it, so `ncm build --plain`, `ncm runclient --plain` and any other drawing tool answer it the same way. The colour drops when `NO_COLOR` is set or the output is redirected.
+
+The build targets a package ships are run by the msbuild engine bundled with ncm, together with the .NET sdk props and targets it needs, so a machine without a dotnet sdk still runs them. The copy comes from the sdk that built ncm, which keeps the engine, the built-in tasks and the sdk targets on one version.
+
 | Parameter | Description |
 |---|---|
 | `-c`, `--configuration <name>` | Build configuration, defaults to `Release` |
 | `--no-check` | Skip the api, syntax and injection checks and run `dotnet build` directly |
 | `--check-only` | Run the api, syntax and injection checks only, build nothing |
-| `--no-manifest` | Skip the `ncmod.json` lookup, treat the current directory as a plain C# project (must contain a csproj). Its assembly, project and package references are resolved through msbuild, restoring it first when needed |
+| `--no-manifest` | Skip the `ncmod.json` lookup, treat the current directory as a plain C# project (must contain a csproj). Its assembly, project and package references are resolved through msbuild, restoring it first when needed and building the referenced projects whose output is missing |
 | `--lint` | Run the Roslynator code quality rules in addition to the api and syntax checks |
-| `--taint` | Follow untrusted input to a dangerous api after the regular checks |
+| `--taint` | Follow untrusted input to dangerous apis after the regular checks |
+| `--plain` | Print one progress line per step instead of redrawing a single line, for logs and CI |
+
+With `--no-manifest` the project is checked as a plain C# project rather than as a mod: the compile settings are read from the csproj itself (defines, `AllowUnsafeBlocks`, `Nullable`, warning levels), the source generators the sdk ships run so attributes such as `LibraryImport` get their implementation, and the controls a UI file names are declared for the check, so a code-behind file binds the way it does in a real build. The mod api catalog is not applied, since only a project with a manifest is a mod.
 
 ### `clean`
 
@@ -190,6 +197,7 @@ Build the current mod and run the NacreCraft server. The runtime is the shared b
 | Parameter | Description |
 |---|---|
 | `--refresh` | Refresh the server cache against the remote index, no `ncmod.json` and no build needed. A project on a local kernel directory has nothing to refresh and is told as much |
+| `--plain` | Print one line per step instead of drawing the progress line, which is what a log or a CI run wants |
 | `[server args]` | Everything after `runserver` is passed to the server unchanged |
 
 ### `runclient`
@@ -207,6 +215,7 @@ On the first run of a project the Minecraft client jar is downloaded too and pas
 | Parameter | Description |
 |---|---|
 | `--refresh` | Refresh the kernel cache against the remote index, no `ncmod.json` and no build needed |
+| `--plain` | Print one line per step instead of drawing the progress line, which is what a log or a CI run wants |
 | `[client args]` | Everything after `runclient` is passed to the client unchanged |
 
 ### `asm`
@@ -256,7 +265,7 @@ Scan the project sources and print the call graph: the entry methods, the condit
 | `--no-color` | Disable ANSI colours in the console |
 | `-o`, `--output <file>` | Write the report to a file instead of the console |
 
-An entry is a method with no incoming call, `Main` first. A conditional call carries its test as `[if ...]`, `[else]`, `[&&]` or `[?.]`; a call back into a method still being expanded is `[recursive]`, a call outside the sources is `[external]`, and a branch cut by `--depth` is `[depth]`. Calls to the same target under one caller are merged with `xN`, and a body is expanded once per report so later references say `[expanded]`.
+An entry is a method with no incoming call, `Main` first. Private and file-local methods, abstract or extern declarations and compiler generated members are left out, since nothing calls them and they are not the top of the graph. A conditional call carries its test as `[if ...]`, `[else]`, `[&&]` or `[?.]`; a call back into a method still being expanded is `[recursive]`, a call outside the sources is `[external]`, and a branch cut by `--depth` is `[depth]`. Calls to the same target under one caller are merged with `xN`, and a body is expanded once per report so later references say `[expanded]`.
 
 The cycle section lists the calls that have no exit and whose condition never flips. `build` reports the same set as `NC0004`, so a clean `callgraph` and a passing check agree. A walk is capped at 256 levels and 20000 nodes, which keeps a very wide graph bounded.
 
@@ -318,7 +327,9 @@ Follow untrusted values from a root method to a sink and print every route that 
 
 A pattern matches a method by full name, by type and method name, or by method name alone, with `*` and `?` as wildcards; `System.IO.File.*` therefore covers every `File` overload. The dangerous apis the syntax check already knows are sinks on their own, so `--sink` is for the calls this project considers dangerous rather than for repeating `NC0003`.
 
-Every parameter of a root is seeded by index, so a value handed to the second parameter is not mistaken for the first; `--root-parameter` narrows that to the names given, which is how a call whose other arguments are trusted is checked. A `summary` run follows local calls and stops on a cycle; `none` stays inside the root. Each report entry is the call chain and the sink site, and the same chain at the same position is reported once.
+The usual text escapes are sanitizers by default — `Uri.EscapeDataString`, `WebUtility.HtmlEncode`/`UrlEncode`, `HttpUtility` and `Regex.Escape` — and they are checked before the configured rules, so a broad sink pattern does not turn an escape call into a finding.
+
+Every parameter of a root is seeded by index, so a value handed to the second parameter is not mistaken for the first; `--root-parameter` narrows that to the names given, which is how a call whose other arguments are trusted is checked. A `summary` run follows local calls and stops on a cycle; `none` stays inside the root. Each report entry is the call chain and the sink site, and the same chain at the same position is reported once. A run that never met a sink says `no sink matched`, which is how it differs from a run that met sinks but found no route.
 
 ```powershell
 ncm taint -r MyMod.Entry.OnLoad --sink "System.IO.File.*" --sanitizer "System.Net.WebUtility.HtmlEncode"
@@ -399,16 +410,23 @@ A mod project can carry a `.ncproj` file next to `ncmod.json`. It holds developm
 
 With a `.ncproj` present ncm compiles the project with Roslyn directly; without one it falls back to `dotnet build`. Tasks declared here run as `ncm <task>`.
 
-Everything the build needs at build time lives under `Build`: `Build/kernel` holds the NC reference assemblies synced from the kernel cache, or from the local kernel directory when `<Sources>` names one, `Build/packages` the packages pulled by the restore, `Build/targets` the props and targets those packages ship, `Build/obj` the intermediate directory the build targets run in, and `Build/out` the build output.
+Everything the build needs at build time lives under `Build`: `Build/kernel` holds the NC reference assemblies synced from the kernel cache — both the server and the client ones, since a template project carries client code — or from the local kernel directory when `<Sources>` names one, `Build/packages` the packages pulled by the restore, `Build/targets` the props and targets those packages ship, `Build/obj` the intermediate directory the build targets run in, and `Build/out` the build output.
 
 ```xml
 <ncproj version="1">
   <Check LangVersion="latest" />
   <Build AssemblyName="Demo" Configuration="Release" Output="Build/out" OutputType="Library"
-         RootNamespace="Demo" Nullable="true" ImplicitUsings="true" DefineConstants="DEBUG" ExtraArgs="" />
+         RootNamespace="Demo" Nullable="true" ImplicitUsings="true" DefineConstants="DEBUG" ExtraArgs=""
+         SharedDependencies="true" Optimize="true" DebugType="portable" PlatformTarget="AnyCPU"
+         NoWarn="" AnalysisLevel="latest">
+    <!-- a package the kernel already ships is not embedded again; these names never are -->
+    <NoEmbed Include="NativeLib.dll" />
+  </Build>
   <Packages>
     <Package Id="Newtonsoft.Json" Version="13.0.3" />
   </Packages>
+  <!-- resolves the packages above, empty or absent meaning the nuget.org index -->
+  <PackageSource Url="https://api.nuget.org/v3/index.json" />
   <References>
     <File Include="libs/**.dll" />
     <Project Include="../SharedLib" />
@@ -447,8 +465,12 @@ Everything the build needs at build time lives under `Build`: `Build/kernel` hol
 | Element | Attributes |
 |---|---|
 | `Check` | `LangVersion` — the C# version used for the api and syntax checks |
-| `Build` | `AssemblyName`, `Configuration`, `Output`, `OutputType` — `Library` (the default) or `Exe`, a plain compilation choice, ncm writes neither an apphost nor a runtimeconfig, `RootNamespace` — used as the default prefix of embedded resource names, `Nullable`, `ImplicitUsings`, `DefineConstants`, `ExtraArgs`, `DependsOnModApi` — whether the mod api is restored as a compile reference and staged next to the mod, `true` by default; set it to `false` for a pure mod that does not use the api, `AllowUnsafe` — the equivalent of the csproj `AllowUnsafeBlocks`, `false` by default; a mod that turns it on also has its `unsafe` code measured by the memory safety check |
+| `Build` | identity and paths: `AssemblyName`, `Configuration`, `Output`, `OutputType` — `Library` (the default) or `Exe`, a plain compilation choice, ncm writes neither an apphost nor a runtimeconfig, `RootNamespace` — used as the default prefix of embedded resource names, `ExtraArgs`, `DependsOnModApi` — whether the mod api is restored as a compile reference and staged next to the mod, `true` by default; set it to `false` for a pure mod that does not use the api, `SharedDependencies` — whether a package assembly the kernel already ships is left out of the mod, `true` by default; a mod that must carry its own copy sets it to `false`. The `NoEmbed` children name assemblies that are never embedded, as complete file names, a semicolon separated list in `Include` |
+| `Build` | compiler switches, each named after the msbuild property it stands for: `Nullable`, `ImplicitUsings`, `DefineConstants`, `AllowUnsafeBlocks` — `false` by default; a mod that turns it on also has its `unsafe` code measured by the memory safety check, `Optimize` — `true` by default, `CheckForOverflowUnderflow`, `PlatformTarget` — `AnyCPU`, `AnyCPU32BitPreferred`, `x86`, `x64`, `ARM` or `ARM64`, `WarningLevel` — `4` by default, `NoWarn`, `WarningsAsErrors`, `WarningsNotAsErrors` — warning ids, semicolon separated, `TreatWarningsAsErrors`, `Deterministic` — `true` by default, `PathMap` — `from=to` pairs written into the pdb, `Features` — compiler features as `key=value` pairs |
+| `Build` | output switches: `DebugType` — `portable` (the default), `embedded`, `full` or `none`, `DebugSymbols` — `true` by default, `GenerateDocumentationFile`, `DocumentationFile` — where the xml goes, beside the assembly by default, `EmitCompilerGeneratedFiles`, `CompilerGeneratedFilesOutputPath` — where generator output is written, under `Build/obj/generated` by default |
+| `Build` | analyzers: `EnableNETAnalyzers` — `true` by default, runs the `CA` rules the sdk ships, `AnalysisLevel` — `latest` by default, an optional mode may follow a dash as in `latest-all` or `10.0-minimum`, `EnforceCodeStyleInBuild` — lets `IDE` rules take part in the build |
 | `Packages` | one `Package` per dependency with `Id` and an optional `Version`, the version range syntax matches NuGet |
+| `PackageSource` | `Url` — the feed the packages and their transitive dependencies are resolved from, a v3 index such as a private mirror; left out, nuget.org is used. The global config may set it once for every project on the machine |
 | `References` | `File` — a dll path or pattern, `*`, `?` and `**` work as wildcards, used as a compile reference only; `Project` — the directory or the project file of another project, ncproj or csproj, built first so its output is up to date, then what it produced is copied beside the built assembly when it is itself a mod, and embedded into the assembly as an embedded dependency when it is not. Both paths are resolved relative to the project root |
 | `Server` | `Cache` — where the runtime files are cached, the shared download cache by default, `Args` — extra server arguments, `Debug` — always run in debug mode |
 | `Client` | `Version` — the client jar to fetch, `Jar` — a direct download url instead of the version manifest, `Args` — extra client arguments |

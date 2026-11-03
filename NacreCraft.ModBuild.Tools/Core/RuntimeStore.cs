@@ -1,6 +1,7 @@
 namespace NacreCraft.ModBuild.Core;
 
 using System.Runtime.InteropServices;
+using NacreCraft.ModBuild.Tools;
 
 //RuntimeSide which half of the runtime a launch needs
 internal enum RuntimeSide
@@ -95,7 +96,7 @@ internal static class RuntimeStore
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             //a running client or server holds its assemblies, and the merged folder from before is still usable
-            Console.WriteLine($"warning: cannot rebuild {destination}: {e.Message}");
+            Progress.WriteLine($"warning: cannot rebuild {destination}: {e.Message}");
         }
 
         return destination;

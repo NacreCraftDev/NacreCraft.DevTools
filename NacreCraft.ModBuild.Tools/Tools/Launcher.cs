@@ -247,8 +247,10 @@ internal static class Launcher
     //The run folder must not have it, since the main library and loader are already loaded here
     //includeModApi adds the mod api for projects built against it, a pure mod leaves it out
     //The root assembly NacreCraft.dll also carries types those compile references need
+    //extraSource fills in the assemblies the main source does not ship, which is how the client half reaches a
+    //project build: a file both sides carry is kept from the main source, since only one copy can be referenced
     internal static void SyncKernel(string source, string destination, bool includeModLoader = false,
-        bool includeModApi = true)
+        bool includeModApi = true, string? extraSource = null)
     {
         Directory.CreateDirectory(destination);
 
@@ -279,9 +281,39 @@ internal static class Launcher
             copied++;
         }
 
+        if (extraSource is not null)
+            copied += Fill(extraSource, destination, pattern, includeModLoader, includeModApi, expected);
+
         var removed = Remove(destination, expected);
 
         Trace.Log($"kernel synced {copied} file(s), removed {removed} from {destination}");
+    }
+
+    //Fill adds the assemblies only the extra source ships, leaving every file the main source already placed alone
+    //Their names join expected so a later sync does not mistake them for leftovers of an older kernel
+    private static int Fill(string source, string destination, string pattern, bool includeModLoader,
+        bool includeModApi, HashSet<string> expected)
+    {
+        var filled = 0;
+        foreach (var path in KernelFiles(source, pattern))
+        {
+            var name = Path.GetFileNameWithoutExtension(path);
+            if (!includeModLoader && name == ModLoaderAssemblyName)
+                continue;
+            if (!includeModApi && name == ModApiAssemblyName)
+                continue;
+
+            expected.Add(Path.GetFileName(path));
+
+            var target = Path.Combine(destination, Path.GetFileName(path));
+            if (File.Exists(target))
+                continue;
+
+            File.Copy(path, target, overwrite: false);
+            filled++;
+        }
+
+        return filled;
     }
 
     //Remove drops the kernel assemblies the source does not ship anymore
@@ -315,6 +347,10 @@ internal static class Launcher
     //them, while a downloaded cache is flat, so both spots are read and the flat one wins on a name that appears twice
     private static IEnumerable<string> KernelFiles(string source, string pattern)
     {
+        //a side that was never cached has no directory, which is an empty set rather than a failure
+        if (!Directory.Exists(source))
+            yield break;
+
         foreach (var path in Directory.EnumerateFiles(source, pattern))
             yield return path;
 

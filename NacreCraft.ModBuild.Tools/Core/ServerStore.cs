@@ -1,3 +1,5 @@
+using NacreCraft.ModBuild.Tools;
+
 namespace NacreCraft.ModBuild.Core;
 
 //ServerStore the server half of the runtime, kept as the entry point the build and the run tools already use
@@ -86,7 +88,7 @@ public static class ServerStore
             return;
         }
 
-        Console.WriteLine($"warning: <Sources Directory=\"{source.Directory}\"> does not exist, the source is used instead");
+        Progress.WriteLine($"warning: <Sources Directory=\"{source.Directory}\"> does not exist, the source is used instead");
     }
 
     //Make sure the cached files are complete and return whether the runtime is usable
@@ -125,13 +127,13 @@ public static class ServerStore
         //The local directory is never downloaded into, so there is nothing to compare against an index
         if (local is not null)
         {
-            Console.WriteLine($"Kernel comes from the local directory {local}, nothing to refresh");
+            Progress.WriteLine($"Kernel comes from the local directory {local}, nothing to refresh");
             return true;
         }
 
         if (SkipUpdate)
         {
-            Console.WriteLine($"Kernel update is off ({SkipUpdateVariable}), nothing to refresh");
+            Progress.WriteLine($"Kernel update is off ({SkipUpdateVariable}), nothing to refresh");
             return true;
         }
 

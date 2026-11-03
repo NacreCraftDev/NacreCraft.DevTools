@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Xml;
 using System.Xml.Linq;
 using NacreCraft.ModBuild.Core;
@@ -223,13 +224,7 @@ internal static class UpgradeTool
                     migration.Unhandled.Add($"<Nullable>{value}</Nullable>");
                 break;
             case "AllowUnsafeBlocks":
-                if (TryBool(value, out var allowUnsafe))
-                {
-                    migration.AllowUnsafe = allowUnsafe;
-                    migration.Migrated.Add($"AllowUnsafe {value}");
-                }
-                else
-                    migration.Unhandled.Add($"<AllowUnsafeBlocks>{value}</AllowUnsafeBlocks>");
+                ReadSwitch(property, migration, value, flag => migration.AllowUnsafeBlocks = flag);
                 break;
             case "ImplicitUsings":
                 if (TryBool(value, out var implicitUsings))
@@ -239,6 +234,66 @@ internal static class UpgradeTool
                 }
                 else
                     migration.Unhandled.Add($"<ImplicitUsings>{value}</ImplicitUsings>");
+                break;
+            case "Optimize":
+                ReadSwitch(property, migration, value, flag => migration.Optimize = flag);
+                break;
+            case "CheckForOverflowUnderflow":
+                ReadSwitch(property, migration, value, flag => migration.CheckForOverflowUnderflow = flag);
+                break;
+            case "PlatformTarget":
+                ReadChoice(property, migration, value, NcBuild.PlatformTargets, choice => migration.PlatformTarget = choice);
+                break;
+            case "WarningLevel":
+                ReadNumber(property, migration, value, number => migration.WarningLevel = number);
+                break;
+            case "NoWarn":
+                ReadText(property, migration, value, text => migration.NoWarn = text);
+                break;
+            case "WarningsAsErrors":
+                ReadText(property, migration, value, text => migration.WarningsAsErrors = text);
+                break;
+            case "WarningsNotAsErrors":
+                ReadText(property, migration, value, text => migration.WarningsNotAsErrors = text);
+                break;
+            case "TreatWarningsAsErrors":
+                ReadSwitch(property, migration, value, flag => migration.TreatWarningsAsErrors = flag);
+                break;
+            case "Deterministic":
+                ReadSwitch(property, migration, value, flag => migration.Deterministic = flag);
+                break;
+            case "PathMap":
+                ReadText(property, migration, value, text => migration.PathMap = text);
+                break;
+            case "Features":
+                ReadText(property, migration, value, text => migration.Features = text);
+                break;
+            case "EnableNETAnalyzers":
+                ReadSwitch(property, migration, value, flag => migration.EnableNETAnalyzers = flag);
+                break;
+            case "AnalysisLevel":
+                ReadText(property, migration, value, text => migration.AnalysisLevel = text);
+                break;
+            case "EnforceCodeStyleInBuild":
+                ReadSwitch(property, migration, value, flag => migration.EnforceCodeStyleInBuild = flag);
+                break;
+            case "DebugType":
+                ReadChoice(property, migration, value, NcBuild.DebugTypes, choice => migration.DebugType = choice);
+                break;
+            case "DebugSymbols":
+                ReadSwitch(property, migration, value, flag => migration.DebugSymbols = flag);
+                break;
+            case "GenerateDocumentationFile":
+                ReadSwitch(property, migration, value, flag => migration.GenerateDocumentationFile = flag);
+                break;
+            case "DocumentationFile":
+                ReadText(property, migration, value, text => migration.DocumentationFile = text);
+                break;
+            case "EmitCompilerGeneratedFiles":
+                ReadSwitch(property, migration, value, flag => migration.EmitCompilerGeneratedFiles = flag);
+                break;
+            case "CompilerGeneratedFilesOutputPath":
+                ReadText(property, migration, value, text => migration.CompilerGeneratedFilesOutputPath = text);
                 break;
             case "TargetFramework":
                 migration.Handled.Add($"<TargetFramework>{value}</TargetFramework> (ncm follows its own runtime)");
@@ -264,6 +319,64 @@ internal static class UpgradeTool
                 migration.Unhandled.Add($"<{name}>{value}</{name}>");
                 break;
         }
+    }
+
+    //ReadSwitch carries a boolean property over, recording either the migration or why it did not happen
+    private static void ReadSwitch(XElement property, Migration migration, string value, Action<bool> assign)
+    {
+        var name = property.Name.LocalName;
+        if (TryBool(value, out var flag))
+        {
+            assign(flag);
+            migration.Migrated.Add($"{name} {value}");
+            return;
+        }
+
+        migration.Unhandled.Add($"<{name}>{value}</{name}>");
+    }
+
+    //ReadText carries a text property over, refusing values that lean on msbuild expansion
+    private static void ReadText(XElement property, Migration migration, string value, Action<string> assign)
+    {
+        var name = property.Name.LocalName;
+        if (value.Contains("$(", StringComparison.Ordinal))
+        {
+            migration.Unhandled.Add($"<{name}>{value}</{name}> (ncproj does not expand msbuild properties)");
+            return;
+        }
+
+        assign(value);
+        migration.Migrated.Add($"{name} {value}");
+    }
+
+    //ReadChoice carries a property over only when its value is one the config accepts
+    private static void ReadChoice(XElement property, Migration migration, string value, string[] options,
+        Action<string> assign)
+    {
+        var name = property.Name.LocalName;
+        var match = options.FirstOrDefault(option => string.Equals(option, value, StringComparison.OrdinalIgnoreCase));
+        if (match is null)
+        {
+            migration.Unhandled.Add($"<{name}>{value}</{name}>");
+            return;
+        }
+
+        assign(match);
+        migration.Migrated.Add($"{name} {match}");
+    }
+
+    //ReadNumber carries a whole number property over
+    private static void ReadNumber(XElement property, Migration migration, string value, Action<int> assign)
+    {
+        var name = property.Name.LocalName;
+        if (!int.TryParse(value, out var number))
+        {
+            migration.Unhandled.Add($"<{name}>{value}</{name}>");
+            return;
+        }
+
+        assign(number);
+        migration.Migrated.Add($"{name} {number}");
     }
 
     //ReadItem handles one item; mostly only package references need migrating, the rest is what ncm already does
@@ -396,10 +509,45 @@ internal static class UpgradeTool
         if ((migration.ImplicitUsings ?? sharedBuild?.ImplicitUsings) is { } implicitUsings)
             build.SetAttributeValue("ImplicitUsings", implicitUsings.ToString().ToLowerInvariant());
         //the unsafe switch is written whenever it is known, since turning it on is what a csproj had to say out loud
-        if ((migration.AllowUnsafe ?? (sharedBuild?.AllowUnsafe == true ? true : null)) is { } allowUnsafe)
-            build.SetAttributeValue("AllowUnsafe", allowUnsafe.ToString().ToLowerInvariant());
+        if ((migration.AllowUnsafeBlocks ?? (sharedBuild?.AllowUnsafeBlocks == true ? true : null)) is { } allowUnsafe)
+            build.SetAttributeValue("AllowUnsafeBlocks", allowUnsafe.ToString().ToLowerInvariant());
         if (sharedBuild is { DependsOnModApi: false })
             build.SetAttributeValue("DependsOnModApi", "false");
+
+        //compiler switches, written only where the project or the global config actually said something
+        SetSwitch(build, "Optimize", migration.Optimize ?? sharedBuild?.Optimize);
+        SetSwitch(build, "CheckForOverflowUnderflow",
+            migration.CheckForOverflowUnderflow ?? sharedBuild?.CheckForOverflowUnderflow);
+        SetAttribute(build, "PlatformTarget", migration.PlatformTarget ?? sharedBuild?.PlatformTarget ?? string.Empty);
+        SetNumber(build, "WarningLevel", migration.WarningLevel ?? sharedBuild?.WarningLevel);
+        SetAttribute(build, "NoWarn", migration.NoWarn ?? sharedBuild?.NoWarn ?? string.Empty);
+        SetAttribute(build, "WarningsAsErrors",
+            migration.WarningsAsErrors ?? sharedBuild?.WarningsAsErrors ?? string.Empty);
+        SetAttribute(build, "WarningsNotAsErrors",
+            migration.WarningsNotAsErrors ?? sharedBuild?.WarningsNotAsErrors ?? string.Empty);
+        SetSwitch(build, "TreatWarningsAsErrors",
+            migration.TreatWarningsAsErrors ?? sharedBuild?.TreatWarningsAsErrors);
+        SetSwitch(build, "Deterministic", migration.Deterministic ?? sharedBuild?.Deterministic);
+        SetAttribute(build, "PathMap", migration.PathMap ?? sharedBuild?.PathMap ?? string.Empty);
+        SetAttribute(build, "Features", migration.Features ?? sharedBuild?.Features ?? string.Empty);
+
+        //analyzer switches
+        SetSwitch(build, "EnableNETAnalyzers", migration.EnableNETAnalyzers ?? sharedBuild?.EnableNETAnalyzers);
+        SetAttribute(build, "AnalysisLevel", migration.AnalysisLevel ?? sharedBuild?.AnalysisLevel ?? string.Empty);
+        SetSwitch(build, "EnforceCodeStyleInBuild",
+            migration.EnforceCodeStyleInBuild ?? sharedBuild?.EnforceCodeStyleInBuild);
+
+        //output switches
+        SetAttribute(build, "DebugType", migration.DebugType ?? sharedBuild?.DebugType ?? string.Empty);
+        SetSwitch(build, "DebugSymbols", migration.DebugSymbols ?? sharedBuild?.DebugSymbols);
+        SetSwitch(build, "GenerateDocumentationFile",
+            migration.GenerateDocumentationFile ?? sharedBuild?.GenerateDocumentationFile);
+        SetAttribute(build, "DocumentationFile",
+            migration.DocumentationFile ?? sharedBuild?.DocumentationFile ?? string.Empty);
+        SetSwitch(build, "EmitCompilerGeneratedFiles",
+            migration.EmitCompilerGeneratedFiles ?? sharedBuild?.EmitCompilerGeneratedFiles);
+        SetAttribute(build, "CompilerGeneratedFilesOutputPath",
+            migration.CompilerGeneratedFilesOutputPath ?? sharedBuild?.CompilerGeneratedFilesOutputPath ?? string.Empty);
         if (build.HasAttributes)
             root.Add(build);
 
@@ -569,6 +717,20 @@ internal static class UpgradeTool
             element.SetAttributeValue(name, value);
     }
 
+    //SetSwitch writes a boolean attribute only when the value is known, keeping the config short
+    private static void SetSwitch(XElement element, string name, bool? value)
+    {
+        if (value is { } flag)
+            element.SetAttributeValue(name, flag ? "true" : "false");
+    }
+
+    //SetNumber writes a whole number attribute only when the value is known
+    private static void SetNumber(XElement element, string name, int? value)
+    {
+        if (value is { } number)
+            element.SetAttributeValue(name, number.ToString(CultureInfo.InvariantCulture));
+    }
+
     //TryBool accepts both the true/false and the enable/disable forms from csproj
     private static bool TryBool(string value, out bool result)
     {
@@ -618,7 +780,50 @@ internal static class UpgradeTool
         public bool? ImplicitUsings { get; set; }
 
         //null means the project does not set it, so the compiler default of no unsafe code applies
-        public bool? AllowUnsafe { get; set; }
+        public bool? AllowUnsafeBlocks { get; set; }
+
+        //Compiler switches carried over as is, null meaning the project left them out
+        public bool? Optimize { get; set; }
+
+        public bool? CheckForOverflowUnderflow { get; set; }
+
+        public string? PlatformTarget { get; set; }
+
+        public int? WarningLevel { get; set; }
+
+        public string? NoWarn { get; set; }
+
+        public string? WarningsAsErrors { get; set; }
+
+        public string? WarningsNotAsErrors { get; set; }
+
+        public bool? TreatWarningsAsErrors { get; set; }
+
+        public bool? Deterministic { get; set; }
+
+        public string? PathMap { get; set; }
+
+        public string? Features { get; set; }
+
+        //Analyzer switches, the sdk ones matching their msbuild names
+        public bool? EnableNETAnalyzers { get; set; }
+
+        public string? AnalysisLevel { get; set; }
+
+        public bool? EnforceCodeStyleInBuild { get; set; }
+
+        //Output switches, which decide what lands beside the assembly
+        public string? DebugType { get; set; }
+
+        public bool? DebugSymbols { get; set; }
+
+        public bool? GenerateDocumentationFile { get; set; }
+
+        public string? DocumentationFile { get; set; }
+
+        public bool? EmitCompilerGeneratedFiles { get; set; }
+
+        public string? CompilerGeneratedFilesOutputPath { get; set; }
 
         public List<NcPackage> Packages { get; } = [];
 

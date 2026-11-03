@@ -1,4 +1,5 @@
 using NacreCraft.ModBuild.Core;
+using NacreCraft.ModBuild.Tools;
 using NuGet.Common;
 using NuGet.Configuration;
 using NuGet.Frameworks;
@@ -20,7 +21,12 @@ public static class PackageResolver
 
     public static string CacheRoot => Root;
 
-    private const string Source = "https://api.nuget.org/v3/index.json";
+    //The feed the project resolves from, a config without a <PackageSource> keeps the default index
+    private static string SourceOf(NcProject project)
+        => string.IsNullOrWhiteSpace(project.PackageSource) ? DefaultSource : project.PackageSource;
+
+    //The feed used when the project config names none
+    private const string DefaultSource = "https://api.nuget.org/v3/index.json";
 
     //Iteration cap for the dependency graph, which needs a stopping point when versions pull against each other
     private const int Rounds = 16;
@@ -33,7 +39,7 @@ public static class PackageResolver
         error = string.Empty;
         if (project.Packages.Count == 0)
         {
-            Console.WriteLine("No <Package> declared in the project config, nothing to restore");
+            Progress.WriteLine("No <Package> declared in the project config, nothing to restore");
             return true;
         }
 
@@ -53,7 +59,7 @@ public static class PackageResolver
 
     private static async Task<(bool Ok, string Error)> RestoreAsync(NcProject project, string target)
     {
-        var repository = Repository.Factory.GetCoreV3(Source);
+        var repository = Repository.Factory.GetCoreV3(SourceOf(project));
         var cache = new SourceCacheContext();
         var finder = await repository.GetResourceAsync<FindPackageByIdResource>().ConfigureAwait(false);
         if (finder is null)
@@ -67,6 +73,7 @@ public static class PackageResolver
 
         foreach (var (id, version) in packages.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
         {
+            Progress.Detail($"{id} {version.ToNormalizedString()}");
             var directory = await EnsureAsync(finder, id, version, folder, cache).ConfigureAwait(false);
             if (directory is null)
                 return (false, $"cannot get {id} {version.ToNormalizedString()}");
@@ -80,7 +87,8 @@ public static class PackageResolver
                 string.Equals(item.Id, id, StringComparison.OrdinalIgnoreCase));
             var collected = PackageTargets.Collect(project.Directory, directory, id, direct);
 
-            Console.WriteLine($"Restored {id} {version.ToNormalizedString()} {Summarize(files.Count, analyzers, collected)}");
+            Progress.WriteLine($"Restored {id} {version.ToNormalizedString()} {Summarize(files.Count, analyzers, collected)}");
+            Progress.Step($"{id} {version.ToNormalizedString()}");
         }
 
         return (true, string.Empty);
@@ -113,7 +121,7 @@ public static class PackageResolver
 
             if (!VersionRange.TryParse(package.Version, out var range))
             {
-                Console.WriteLine($"error: {package.Id} has an invalid version range \"{package.Version}\"");
+                Progress.WriteLine($"error: {package.Id} has an invalid version range \"{package.Version}\"");
                 return null;
             }
 
@@ -138,7 +146,7 @@ public static class PackageResolver
 
                 if (version is null)
                 {
-                    Console.WriteLine($"error: no version of {id} satisfies the requested range");
+                    Progress.WriteLine($"error: no version of {id} satisfies the requested range");
                     return null;
                 }
 
@@ -214,7 +222,7 @@ public static class PackageResolver
         if (await DownloadAsync(finder, id, version, directory, cache).ConfigureAwait(false))
             return directory;
 
-        Console.WriteLine($"error: cannot fetch {id} {version.ToNormalizedString()}");
+        Progress.WriteLine($"error: cannot fetch {id} {version.ToNormalizedString()}");
         return null;
     }
 

@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
-using Spectre.Console;
+using NacreCraft.ModBuild.Tools;
 
 namespace NacreCraft.ModBuild.Core;
 
@@ -57,7 +57,7 @@ public static class AssetsStore
         var entries = ReadIndex(indexFile);
         if (entries.Count == 0)
         {
-            Console.WriteLine($"error: {indexFile} lists no object");
+            Progress.WriteLine($"error: {indexFile} lists no object");
             return null;
         }
 
@@ -70,7 +70,7 @@ public static class AssetsStore
             return index.Id;
         }
 
-        Console.WriteLine($"Downloading {missing.Count} asset object(s) to {Root}");
+        Progress.WriteLine($"Downloading {missing.Count} asset object(s) to {Root}");
         return Download(missing) ? index.Id : null;
     }
 
@@ -106,7 +106,7 @@ public static class AssetsStore
             .ToList();
         if (entries.Count == 0)
         {
-            Console.WriteLine("warning: the asset index lists no sound, the client runs without audio");
+            Progress.WriteLine("warning: the asset index lists no sound, the client runs without audio");
             return null;
         }
 
@@ -138,7 +138,7 @@ public static class AssetsStore
         if (File.Exists(target) && (index.Size <= 0 || new FileInfo(target).Length == index.Size))
             return true;
 
-        Console.WriteLine($"Downloading asset index {index.Id}");
+        Progress.WriteLine($"Downloading asset index {index.Id}");
         foreach (var url in IndexUrls(index))
         {
             for (var attempt = 1; attempt <= Attempts; attempt++)
@@ -158,7 +158,7 @@ public static class AssetsStore
             }
         }
 
-        Console.WriteLine($"error: failed to download the asset index {index.Id}");
+        Progress.WriteLine($"error: failed to download the asset index {index.Id}");
         return false;
     }
 
@@ -194,42 +194,19 @@ public static class AssetsStore
         }
         catch (Exception e)
         {
-            Console.WriteLine($"error: cannot read {path}: {e.Message}");
+            Progress.WriteLine($"error: cannot read {path}: {e.Message}");
             return [];
         }
     }
 
-    //Download every missing object, drawing a progress bar when the output is a terminal
+    //Download every missing object, naming the file that landed in the running progress stage
     private static bool Download(List<AssetObject> entries)
     {
-        if (!Transfer.Enabled)
-            return Across(entries, Announced(entries.Count), null);
-
-        var ok = false;
-        AnsiConsole.Progress()
-            .Columns(new TaskDescriptionColumn(), new ProgressBarColumn(), new PercentageColumn())
-            .Start(context =>
-            {
-                var task = context.AddTask("[green]asset objects[/]", maxValue: entries.Count);
-                ok = Across(entries, null, entry =>
-                {
-                    //the bar names the object that just landed, which is the file the reader is waiting on
-                    task.Description = $"[green]{Markup.Escape(entry.Path)}[/]";
-                    task.Increment(1);
-                });
-            });
-        return ok;
-    }
-
-    //Announced prints one line per object as it starts, which is the only progress a pipe reader gets
-    private static Action<AssetObject> Announced(int total)
-    {
         var started = 0;
-        return entry =>
-        {
-            var index = Interlocked.Increment(ref started);
-            Console.WriteLine($"Downloading asset objects {index}/{total}: {entry.Path}");
-        };
+        return Across(entries,
+            entry => Progress.Transfer("asset objects", Interlocked.Increment(ref started), entries.Count,
+                entry.Path),
+            null);
     }
 
     //Fetch the objects in parallel, counting the ones that never arrived
@@ -248,7 +225,7 @@ public static class AssetsStore
         if (failed == 0)
             return true;
 
-        Console.WriteLine($"error: {failed} asset object(s) could not be downloaded");
+        Progress.WriteLine($"error: {failed} asset object(s) could not be downloaded");
         return false;
     }
 

@@ -11,10 +11,12 @@ internal static class RunServerTool
         => ToolRegistry.Register("runserver", "Build the current mod and run the NacreCraft server", Run,
         [
             new(RunArguments.RefreshOption, "Refresh the server cache against the remote index first, outside a mod project the refresh is all that runs"),
+            new(Progress.PlainOption, "Printed one line per step instead of redrawing, shared by every tool that draws progress"),
             new("[server args]", "Everything after runserver is passed to the server unchanged"),
         ]);
 
     //Run prepares the runtime files and the client jar, stages the mod and hands off to the launcher
+    //The preparation runs under the same progress line the build uses, so a download and a step never fight over the row
     private static int Run(string[] args)
     {
         //The config is optional so the runtime files can be refreshed outside a mod project
@@ -36,18 +38,30 @@ internal static class RunServerTool
         if (Launcher.Launched)
             return Launcher.Launch(Combine(config, args), LaunchTarget.Server, RuntimeSource());
 
+        var (code, prepared) = Progress.Run(session => Prepare(session, config, args));
+        return prepared is null ? code : Launcher.Launch(prepared, LaunchTarget.Server, RuntimeSource());
+    }
+
+    //Prepare brings up everything a launch reads, one task per kind of file
+    //The launch itself stays outside, since the kernel may restart this process before the call ever returns
+    private static (int Code, string[]? Launch) Prepare(ProgressSession session, NcProject? config, string[] args)
+    {
+        var refresh = Array.IndexOf(args, RunArguments.RefreshOption) >= 0;
+        Progress.SetTotal(3);
+
         //--refresh is not a reason to skip the mod, a refreshed kernel running a stale mod is the combination this
         //command exists to prevent; it only changes how the runtime files are brought up to date
-        var refresh = Array.IndexOf(args, RunArguments.RefreshOption) >= 0;
+        var server = session.Add("server", 1, "runtime");
         if (refresh)
         {
             if (!ServerStore.Refresh())
-                return 1;
+                return (1, null);
         }
         else if (!ServerStore.Ensure())
         {
-            return 1;
+            return (1, null);
         }
+        server.Step("runtime");
 
         //Check for the run directory before staging, since staging creates it
         var firstRun = !Directory.Exists(Launcher.RunDirectory);
@@ -58,28 +72,30 @@ internal static class RunServerTool
         if (project is null)
         {
             if (refresh)
-                return Launcher.Launch(arguments, LaunchTarget.Server, RuntimeSource());
+                return (0, arguments);
 
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"error: no {ModProject.ManifestName} in this directory or any parent");
-            Console.ResetColor();
-            return 1;
+            Progress.WriteLine($"error: no {ModProject.ManifestName} in this directory or any parent");
+            return (1, null);
         }
 
         //The client jar comes from the predownload; the first launch uses it to extract the assets
+        var jarTask = session.Add("jar", 1, "client jar");
         var jar = ClientStore.Ensure();
         if (jar is null)
-            return 1;
+            return (1, null);
+        jarTask.Step("client jar");
 
         //Build and deploy both work from the project root, so nothing can launch outside a mod project
+        var stage = session.Add("stage", 1, "mods");
         var root = Path.GetDirectoryName(project.ManifestPath)!;
         if (!ModStaging.Stage(root, Launcher.RunDirectory,
             config?.Build.DependsOnModApi ?? NcBuild.DefaultDependsOnModApi))
-            return 1;
+            return (1, null);
+        stage.Step("mods");
 
         //The assets stay in run after being extracted once, so the jar is only pointed at on the first launch
         var prepared = firstRun ? RunArguments.WithOption(arguments, "--jar-path", jar) : arguments;
-        return Launcher.Launch(prepared, LaunchTarget.Server, RuntimeSource());
+        return (0, prepared);
     }
 
     //RuntimeSource the directory the launcher loads from, with the shared files merged under the server ones
@@ -90,5 +106,5 @@ internal static class RunServerTool
     //Combine the server section of the config with the user's arguments
     private static string[] Combine(NcProject? config, string[] args)
         => RunArguments.Combine(config?.Server.Args ?? string.Empty, config?.Server.Debug == true,
-            RunArguments.WithoutRefresh(args));
+            RunArguments.WithoutLocalSwitches(args));
 }

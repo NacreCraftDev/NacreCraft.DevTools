@@ -11,6 +11,16 @@ public static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        //The progress line draws braille and box characters, and the default console code page turns them into question marks
+        try
+        {
+            Console.OutputEncoding = System.Text.Encoding.UTF8;
+        }
+        catch (IOException)
+        {
+            //no console to set it on, such as a detached pipe, where the encoding is already the caller's
+        }
+
         //The engine comes from the local sdk, and the resolve event must be hooked before the first msbuild type loads
         MsBuildLibrary.Attach(out _);
 
@@ -59,6 +69,13 @@ public static class Program
     //Resolves work by name, with project tasks first, then the global ones and finally the built-in tools
     internal static int Dispatch(string name, string[] rest, NcProject? project, NcProject? global)
     {
+        //--plain belongs to the shared progress component, so every tool answers it and no tool or kernel sees it
+        if (Array.IndexOf(rest, Progress.PlainOption) >= 0)
+        {
+            Progress.Plain = true;
+            rest = rest.Where(argument => argument != Progress.PlainOption).ToArray();
+        }
+
         //a bootstrap exposes the tasks of its projects as <bootstrap>/<task>, run in the owning project
         if (project is { Bootstrap: true } && project.FindScopedTask(name) is { } scoped)
         {

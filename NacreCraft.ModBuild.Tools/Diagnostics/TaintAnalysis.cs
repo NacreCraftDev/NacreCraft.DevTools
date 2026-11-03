@@ -18,9 +18,10 @@ internal static class TaintAnalysis
     private const int MaxDispatch = 8;
 
     public static IReadOnlyList<TaintPath> Analyze(Compilation compilation, IReadOnlyCollection<string> sources,
-        TaintOptions options, out string error)
+        TaintOptions options, out string error, out int sinks)
     {
         error = string.Empty;
+        sinks = 0;
         var methods = Methods(compilation, sources, options);
         if (methods.Count == 0)
         {
@@ -36,6 +37,7 @@ internal static class TaintAnalysis
                 break;
         }
 
+        sinks = walker.Sinks;
         return walker.Paths;
     }
 
@@ -235,6 +237,9 @@ internal static class TaintAnalysis
         }
 
         public List<TaintPath> Paths { get; } = new();
+
+        //Sinks how many sink calls the walk met, which tells an empty rule set apart from a clean result
+        public int Sinks { get; private set; }
 
         //Run treats every parameter of the root as untrusted, unless the call names the ones to seed
         public void Run(IMethodSymbol method)
@@ -558,8 +563,12 @@ internal static class TaintAnalysis
                 _thisSlots = previous;
             }
 
-            if (IsSink(creation.Constructor) && Carries(value))
-                RecordSink(creation, stack);
+            if (IsSink(creation.Constructor))
+            {
+                Sinks++;
+                if (Carries(value))
+                    RecordSink(creation, stack);
+            }
             return value;
         }
 
@@ -588,6 +597,7 @@ internal static class TaintAnalysis
             var kind = _matcher.Match(target);
             if (kind == TaintKind.Sink || IsSink(target))
             {
+                Sinks++;
                 if (Carries(value))
                     RecordSink(invocation, stack);
                 return new Value();
