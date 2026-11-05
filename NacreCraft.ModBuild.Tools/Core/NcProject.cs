@@ -203,6 +203,69 @@ public sealed class NcBuild
 
     //File names that are never embedded, whatever the shared switch says
     public IReadOnlyList<string> NoEmbed { get; init; } = [];
+
+    //With fills the settings this build leaves out from a directory props file
+    //A setting the project writes itself is kept as written, and the warning id lists take the directory's ids in front
+    internal NcBuild With(DirectoryProps props, IReadOnlySet<string> present)
+    {
+        var has = (string key) => present.Contains(key);
+        return new NcBuild
+        {
+            AssemblyName = has("AssemblyName") ? AssemblyName : props.AssemblyName ?? AssemblyName,
+            Configuration = has("Configuration") ? Configuration : props.Configuration ?? Configuration,
+            Output = has("Output") ? Output : props.Output ?? Output,
+            OutputType = has("OutputType") ? OutputType : props.OutputType ?? OutputType,
+            ExtraArgs = has("ExtraArgs") ? ExtraArgs : props.ExtraArgs ?? ExtraArgs,
+            Nullable = has("Nullable") ? Nullable : props.Nullable ?? Nullable,
+            ImplicitUsings = has("ImplicitUsings") ? ImplicitUsings : props.ImplicitUsings ?? ImplicitUsings,
+            DefineConstants = has("DefineConstants") ? DefineConstants : props.DefineConstants ?? DefineConstants,
+            RootNamespace = has("RootNamespace") ? RootNamespace : props.RootNamespace ?? RootNamespace,
+            DependsOnModApi = has("DependsOnModApi") ? DependsOnModApi : props.DependsOnModApi ?? DependsOnModApi,
+            AllowUnsafeBlocks = has("AllowUnsafeBlocks")
+                ? AllowUnsafeBlocks
+                : props.AllowUnsafeBlocks ?? AllowUnsafeBlocks,
+            SharedDependencies = has("SharedDependencies")
+                ? SharedDependencies
+                : props.SharedDependencies ?? SharedDependencies,
+            Optimize = has("Optimize") ? Optimize : props.Optimize ?? Optimize,
+            CheckForOverflowUnderflow = has("CheckForOverflowUnderflow")
+                ? CheckForOverflowUnderflow
+                : props.CheckForOverflowUnderflow ?? CheckForOverflowUnderflow,
+            PlatformTarget = has("PlatformTarget") ? PlatformTarget : props.PlatformTarget ?? PlatformTarget,
+            WarningLevel = has("WarningLevel") ? WarningLevel : props.WarningLevel ?? WarningLevel,
+            NoWarn = DirectoryProps.MergeIds(props.NoWarn, NoWarn),
+            WarningsAsErrors = DirectoryProps.MergeIds(props.WarningsAsErrors, WarningsAsErrors),
+            WarningsNotAsErrors = DirectoryProps.MergeIds(props.WarningsNotAsErrors, WarningsNotAsErrors),
+            TreatWarningsAsErrors = has("TreatWarningsAsErrors")
+                ? TreatWarningsAsErrors
+                : props.TreatWarningsAsErrors ?? TreatWarningsAsErrors,
+            Deterministic = has("Deterministic") ? Deterministic : props.Deterministic ?? Deterministic,
+            PathMap = has("PathMap") ? PathMap : props.PathMap ?? PathMap,
+            Features = has("Features") ? Features : props.Features ?? Features,
+            EnableNETAnalyzers = has("EnableNETAnalyzers")
+                ? EnableNETAnalyzers
+                : props.EnableNETAnalyzers ?? EnableNETAnalyzers,
+            AnalysisLevel = has("AnalysisLevel") ? AnalysisLevel : props.AnalysisLevel ?? AnalysisLevel,
+            EnforceCodeStyleInBuild = has("EnforceCodeStyleInBuild")
+                ? EnforceCodeStyleInBuild
+                : props.EnforceCodeStyleInBuild ?? EnforceCodeStyleInBuild,
+            DebugType = has("DebugType") ? DebugType : props.DebugType ?? DebugType,
+            DebugSymbols = has("DebugSymbols") ? DebugSymbols : props.DebugSymbols ?? DebugSymbols,
+            GenerateDocumentationFile = has("GenerateDocumentationFile")
+                ? GenerateDocumentationFile
+                : props.GenerateDocumentationFile ?? GenerateDocumentationFile,
+            DocumentationFile = has("DocumentationFile")
+                ? DocumentationFile
+                : props.DocumentationFile ?? DocumentationFile,
+            EmitCompilerGeneratedFiles = has("EmitCompilerGeneratedFiles")
+                ? EmitCompilerGeneratedFiles
+                : props.EmitCompilerGeneratedFiles ?? EmitCompilerGeneratedFiles,
+            CompilerGeneratedFilesOutputPath = has("CompilerGeneratedFilesOutputPath")
+                ? CompilerGeneratedFilesOutputPath
+                : props.CompilerGeneratedFilesOutputPath ?? CompilerGeneratedFilesOutputPath,
+            NoEmbed = NoEmbed,
+        };
+    }
 }
 
 //One package dependency
@@ -448,7 +511,8 @@ public sealed class NcProject
         NcClient client, NcSource? sources, NcTemplate? template, IReadOnlyList<string> friends,
         IReadOnlyList<string> deploy, IReadOnlyList<string> resources, IReadOnlyList<NcResource> embedded,
         IReadOnlyList<string> files, IReadOnlyList<string> projects, IReadOnlyList<string> exclude,
-        IReadOnlySet<string> declared, bool allowScriptClr, bool bootstrap)
+        IReadOnlySet<string> declared, IReadOnlySet<string> buildKeys, IReadOnlySet<string> checkKeys,
+        bool allowScriptClr, bool bootstrap)
     {
         Path = path;
         Directory = System.IO.Path.GetDirectoryName(path)!;
@@ -470,6 +534,8 @@ public sealed class NcProject
         ProjectReferences = projects;
         Exclude = exclude;
         Declared = declared;
+        BuildKeys = buildKeys;
+        CheckKeys = checkKeys;
         AllowScriptClr = allowScriptClr;
         Bootstrap = bootstrap;
     }
@@ -548,14 +614,31 @@ public sealed class NcProject
     //Names of the elements this config declares, used to tell apart an unset value from a deliberate one
     public IReadOnlySet<string> Declared { get; }
 
-    //Fill in what this config leaves out from a machine wide one
+    //Names of the attributes written under <Build>, which a directory props file must not replace
+    internal IReadOnlySet<string> BuildKeys { get; }
+
+    //Names of the attributes written under <Check>, which a directory props file must not replace
+    internal IReadOnlySet<string> CheckKeys { get; }
+
+    //Fill in what this config leaves out from a machine wide one and from the directory props files above it
     //A value declared here always wins, since a project is the more specific of the two; an element that is absent uses
     //the global one whole, while the pull rules fall back field by field so a half written <Server> still keeps the rest
+    //The check and build sections take a props file field by field, so a directory can set one switch for every project
+    //below it; the warning id lists accumulate from the machine config to the project
     //Relative paths of the global config stay relative to it, so a shared <Deploy> or <References> has to be absolute
-    internal NcProject InheritFrom(NcProject global)
+    internal NcProject InheritFrom(NcProject global, IReadOnlyList<DirectoryProps> layers)
     {
         var absent = (string element) => !Declared.Contains(element);
         var shared = (string value, string fallback) => value.Length > 0 ? value : fallback;
+
+        //A section the project leaves out comes from the global config first, so the props files layer over its values
+        var build = absent("Build") ? global.Build : Build;
+        var check = absent("Check") ? global.Check : Check;
+        if (layers.Count > 0)
+        {
+            build = DirectoryProps.ApplyAll(build, layers, absent("Build") ? EmptyKeys : BuildKeys);
+            check = DirectoryProps.ApplyAll(check, layers, absent("Check") ? EmptyKeys : CheckKeys);
+        }
 
         var server = new NcServer(shared(Server.Cache, global.Server.Cache), shared(Server.Args, global.Server.Args),
             absent("Server") ? global.Server.Debug : Server.Debug);
@@ -580,8 +663,7 @@ public sealed class NcProject
                 shared(mineTemplate.Base, theirTemplate.Base));
         }
 
-        return new NcProject(Path, Overrides, absent("Check") ? global.Check : Check,
-            absent("Build") ? global.Build : Build, absent("Packages") ? global.Packages : Packages,
+        return new NcProject(Path, Overrides, check, build, absent("Packages") ? global.Packages : Packages,
             PackageSource.Length > 0 ? PackageSource : global.PackageSource, Tasks,
             server, client, sources, template,
             InternalsVisibleTo.Count > 0 ? InternalsVisibleTo : global.InternalsVisibleTo,
@@ -590,9 +672,12 @@ public sealed class NcProject
             EmbeddedResources.Count > 0 ? EmbeddedResources : global.EmbeddedResources,
             FileReferences.Count > 0 ? FileReferences : global.FileReferences,
             ProjectReferences.Count > 0 ? ProjectReferences : global.ProjectReferences,
-            Exclude.Count > 0 ? Exclude : global.Exclude, Declared,
+            Exclude.Count > 0 ? Exclude : global.Exclude, Declared, BuildKeys, CheckKeys,
             AllowScriptClr || global.AllowScriptClr, Bootstrap);
     }
+
+    //EmptyKeys stands for a section the project does not write, so every setting in the props files applies
+    private static readonly IReadOnlySet<string> EmptyKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
     //Search upward from the given directory for a project config, returning null when none is found
     //A non-empty error means one was found but could not be read, which is different from having none
@@ -605,17 +690,29 @@ public sealed class NcProject
             if (candidate is not null)
             {
                 Trace.Log($"found project config {candidate}");
-                //Every caller sees the same effective config, so the machine wide defaults are applied right here rather
-                //than at each tool's own lookup
+                //Every caller sees the same effective config, so the machine wide defaults and the directory props files
+                //are applied right here rather than at each tool's own lookup
                 var project = Load(candidate, out error);
-                var global = GlobalConfig.Load();
-                return project is not null && global is not null ? project.InheritFrom(global) : project;
+                if (project is null)
+                    return null;
+
+                var layers = DirectoryProps.Collect(project.Directory);
+                if (layers.Count > 0)
+                    Trace.Log($"applied {layers.Count} {DirectoryProps.FileName} file(s) to {candidate}");
+
+                return project.InheritFrom(GlobalConfig.Load() ?? Defaults, layers);
             }
         }
 
         Trace.Log($"no {Extension} from {directory} upward");
         return null;
     }
+
+    //An empty config used when the machine wide one is missing, so the directory props files still apply
+    private static readonly NcProject Defaults = new("defaults.ncproj", false, new NcCheck(null), new NcBuild(),
+        [], string.Empty, [], new NcServer(string.Empty, string.Empty, false),
+        new NcClient(string.Empty, string.Empty, string.Empty), null, null, [], [], [], [], [], [], [],
+        EmptyKeys, EmptyKeys, EmptyKeys, false, false);
 
     //A bootstrap may only aggregate real projects; nesting another bootstrap would create two competing namespaces
     private static bool ValidateBootstrapReferences(string path, IReadOnlyList<string> includes, out string error)
@@ -1028,6 +1125,8 @@ public sealed class NcProject
         var files = new List<string>();
         var projects = new List<string>();
         var declared = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var buildKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var checkKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var allowScriptClr = false;
         var bootstrap = ReadBool(root, "Bootstrap", false, path);
 
@@ -1041,9 +1140,15 @@ public sealed class NcProject
                 ReadTasks(element, overrides, path, tasks);
             }
             else if (Folded(name, "Check"))
+            {
+                AddKeys(element, checkKeys);
                 check = ReadCheck(element);
+            }
             else if (Folded(name, "Build"))
+            {
+                AddKeys(element, buildKeys);
                 build = ReadBuild(element, path);
+            }
             else if (Folded(name, "Packages"))
                 ReadPackages(element, path, packages);
             else if (Folded(name, "PackageSource"))
@@ -1076,8 +1181,15 @@ public sealed class NcProject
             return null;
 
         return new NcProject(path, overrides, check, build, packages, packageSource, tasks, server, client, sources,
-            template, friends, deploy, resources, embedded, files, projects, exclude, declared, allowScriptClr,
-            bootstrap);
+            template, friends, deploy, resources, embedded, files, projects, exclude, declared, buildKeys, checkKeys,
+            allowScriptClr, bootstrap);
+    }
+
+    //AddKeys records the attribute names of an element, so a directory props file knows which settings it must not replace
+    private static void AddKeys(XElement element, HashSet<string> keys)
+    {
+        foreach (var attribute in element.Attributes())
+            keys.Add(attribute.Name.LocalName);
     }
 
     //Read a config from a known path, for the machine wide one that no search should ever reach

@@ -31,8 +31,9 @@ export class ProjectCreator {
         }
 
         const empty = ProjectCreator.isEmpty(root);
+        //an empty folder is initialized in place, anything else gets a subdirectory named after the mod
         const args = [
-            "init",
+            empty ? "init" : "new",
             values.name,
             values.id,
             values.description,
@@ -41,11 +42,6 @@ export class ProjectCreator {
             values.sources,
             values.license,
         ];
-
-        //an empty folder gets the project in place, anything else gets a subdirectory named after the mod
-        if (empty) {
-            args.push("--here");
-        }
 
         //ncm only reads .ncproj, so the fresh project is converted before it is opened
         args.push("--upgrade");
@@ -88,7 +84,7 @@ export class ProjectCreator {
                 }
 
                 vscode.window.showErrorMessage(
-                    `NacreCraft: ncm init failed (${code}). ${output.trim()}`
+                    `NacreCraft: ncm could not create the project (${code}). ${output.trim()}`
                 );
                 resolve(false);
             });

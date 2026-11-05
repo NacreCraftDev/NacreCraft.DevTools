@@ -31,11 +31,11 @@ The install scripts set up everything a mod author needs — the .NET 10 SDK, th
 Packages come from nuget.org unless a `<PackageSource>` names another feed. Then, from a mod project:
 
 ```powershell
-ncm init                        # create a mod project with prompts
-ncm init <name> <id> <description> <authors> <homepage> <sources> <license>
-ncm init <name> --here          # create in the current directory
+ncm new <name>                  # create a mod project in a subdirectory named after it
+ncm new <name> <id> <description> <authors> <homepage> <sources> <license>
                                 # same fields in the same order, no prompts
                                 # trailing ones may be omitted, empty string skips one
+ncm init                        # initialize the current directory, prompts for the rest
 ncm template example <api>      # write an example for an API type
 ncm template tui                # terminal panel: grade the api usage of the current project
 ncm template gui                # the same catalog and grading in a window
@@ -64,20 +64,34 @@ dotnet new ncm -n MyMod         # or create from the template directly
 
 `ncm help` lists every tool, `ncm help <tool>` prints one tool's parameters, and `ncm help all` prints every tool's help in one run.
 
-### `init`
+### `new`
 
-Create a new NacreCraft mod project. The template is embedded in `ncm`, so this works without `dotnet new` or a machine-wide template install.
+Create a mod project in a subdirectory named after it. The template is embedded in `ncm`, so this works without `dotnet new` or a machine-wide template install.
 
 | Parameter | Description |
 |---|---|
-| `<name>` | Mod name, required |
+| `<name>` | Mod name, also the directory name, required |
 | `[id]` | Mod id, derived from the name when omitted |
 | `[description]` | Mod description |
 | `[authors]` | Comma separated author names |
 | `[homepage]` | Homepage url |
 | `[sources]` | Source repository url |
 | `[license]` | License name |
-| `--here` | Create in the current directory instead of a subdirectory named after the mod |
+| `--upgrade` | Convert the created csproj to a `.ncproj` right away, removing the csproj |
+
+### `init`
+
+Initialize a mod project in the current directory, which is the one already open, so no folder is created around it. The mod name defaults to the directory name and the form offers it as the answer; an existing project in the same directory asks before it is touched.
+
+| Parameter | Description |
+|---|---|
+| `[name]` | Mod name, defaults to the directory name |
+| `[id]` | Mod id, derived from the name when omitted |
+| `[description]` | Mod description |
+| `[authors]` | Comma separated author names |
+| `[homepage]` | Homepage url |
+| `[sources]` | Source repository url |
+| `[license]` | License name |
 | `--upgrade` | Convert the created csproj to a `.ncproj` right away, removing the csproj |
 
 ### `template`
@@ -483,6 +497,30 @@ Everything the build needs at build time lives under `Build`: `Build/kernel` hol
 | `Exclude` | `Include` — semicolon separated patterns kept out of everything ncm scans on its own: the compile source list, the api and syntax checks and the axaml pick up. Patterns are relative to the project root, `*` and `?` stay within one segment and `**` crosses directories. A pattern without a wildcard also covers everything under it, one with a wildcard has to match the whole path — see the note below the table. Patterns declared elsewhere, such as `<References>` or `<AvaloniaResources>`, are still honored as written, so an excluded directory can still be referenced on purpose |
 | `Tasks` | one `Task` per task with `Name`, `Description`, `Depends` and `Override`, holding `Exec` steps that run a command line, `Copy` steps that take `From` and `To`, `Zip` steps that pack the `From` directory into the `To` file, and `Tool` steps that take `Name`, `Method` and `Args` and call an installed plugin in this process, and `Script` steps that run JavaScript written inline or named through `File`. `$(Configuration)`, `$(ProjectDir)`, `$(ModId)`, `$(ModName)`, `$(ModVersion)` and `$(env:NAME)` are substituted in every attribute |
 | root | `Override` — the default for tasks that do not carry their own; `Bootstrap` — `true` marks a config that aggregates other projects instead of holding sources |
+
+### Directory props
+
+A `Directory.NcProject.yml` applies to every project at or below its directory, the ncproj counterpart of `Directory.Build.props`. ncm walks upward from the project directory and applies the files from the outermost one down, so a nearer file wins a setting an outer one also writes. A setting the project writes in its own `<Build>` or `<Check>` still wins over every file.
+
+```yaml
+check:
+  langVersion: latest
+
+build:
+  nullable: true
+  implicitUsings: true
+  allowUnsafeBlocks: false
+  warningLevel: 4
+  noWarn: [CS0162, CS8618]
+  warningsAsErrors: [CS8602]
+  warningsNotAsErrors: [CS0168]
+  treatWarningsAsErrors: false
+  analysisLevel: latest-recommended
+```
+
+Every key under `build` names the same msbuild property as its `.ncproj` attribute, spelled in camelCase; the warning id lists take either a yaml sequence or a semicolon separated string, and `check` takes `langVersion`. An unknown key or section is reported and ignored, and a file that is not valid yaml is skipped with a warning.
+
+`noWarn`, `warningsAsErrors` and `warningsNotAsErrors` accumulate instead of replacing each other: directory ids come first, then the project's own, duplicates kept once. A directory can therefore silence a rule for every project below it while a project still adds its own, and an id listed in both `noWarn` and `warningsAsErrors` stays suppressed, matching the compiler.
 
 ### Bootstrap configs
 

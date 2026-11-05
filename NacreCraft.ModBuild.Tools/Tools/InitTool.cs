@@ -6,6 +6,7 @@ using Newtonsoft.Json.Linq;
 namespace NacreCraft.ModBuild.Tools;
 
 //InitTool creates a new mod from the project template and generates the icon along the way
+//init works in the current directory, new makes a subdirectory named after the mod
 internal static class InitTool
 {
     //SourceName the placeholder the template uses for the mod name, in file names and in content alike
@@ -14,16 +15,28 @@ internal static class InitTool
     //TemplateResource the embedded template archive
     private const string TemplateResource = "ncm-template.zip";
 
-    //HereOption creates the project in the current directory instead of a subdirectory named after the mod
-    private const string HereOption = "--here";
-
     //UpgradeOption converts the created csproj into a .ncproj right away, without keeping a backup
     private const string UpgradeOption = "--upgrade";
 
-    //Register this tool with its name, description and parameters
+    //Register both entry points, they differ only in where the project lands
     //The positional arguments follow the form order, and no arguments at all starts the interactive prompt
     public static void Register()
-        => ToolRegistry.Register("init", "Create a new NacreCraft mod project", Run,
+    {
+        ToolRegistry.Register("init", "Initialize a NacreCraft mod project in the current directory",
+            args => Run(args, inPlace: true),
+        [
+            new("[name]", "Mod name, defaults to the directory name"),
+            new("[id]", "Mod id, derived from the name when omitted"),
+            new("[description]", "Mod description"),
+            new("[authors]", "Comma separated author names"),
+            new("[homepage]", "Homepage url"),
+            new("[sources]", "Source repository url"),
+            new("[license]", "License name"),
+            new(UpgradeOption, "Convert the created csproj to a .ncproj, removing the csproj"),
+        ]);
+
+        ToolRegistry.Register("new", "Create a NacreCraft mod project in a new subdirectory",
+            args => Run(args, inPlace: false),
         [
             new("<name>", "Mod name, required"),
             new("[id]", "Mod id, derived from the name when omitted"),
@@ -32,32 +45,30 @@ internal static class InitTool
             new("[homepage]", "Homepage url"),
             new("[sources]", "Source repository url"),
             new("[license]", "License name"),
-            new(HereOption, "Create in the current directory instead of a subdirectory named after the mod"),
             new(UpgradeOption, "Convert the created csproj to a .ncproj, removing the csproj"),
         ]);
+    }
 
     //Run collects the content and materializes it
     //No arguments starts the form, arguments are taken positionally in the same order without asking
-    private static int Run(string[] args)
+    //Only init can run into an existing project: new always writes into a subdirectory that has to be free
+    private static int Run(string[] args, bool inPlace)
     {
         var directory = Environment.CurrentDirectory;
-        var here = args.Contains(HereOption, StringComparer.Ordinal);
         var upgrade = args.Contains(UpgradeOption, StringComparer.Ordinal);
-        var positional = args
-            .Where(arg => arg != HereOption && arg != UpgradeOption)
-            .ToArray();
-        var fields = BuildFields(directory, here);
+        var positional = args.Where(arg => arg != UpgradeOption).ToArray();
+        var fields = BuildFields(directory, inPlace);
 
         if (positional.Length > 0)
         {
             if (positional.Length > fields.Count)
             {
-                Console.WriteLine($"init takes at most {fields.Count} arguments: {string.Join(' ', fields.Select(field => field.Key))}");
+                Console.WriteLine($"{CommandOf(inPlace)} takes at most {fields.Count} arguments: {string.Join(' ', fields.Select(field => field.Key))}");
                 return 1;
             }
 
             //This path is for scripts where nobody sees a confirmation, so an existing project fails outright to avoid damage
-            if (HasExistingProject(directory))
+            if (inPlace && HasExistingProject(directory))
             {
                 Console.WriteLine($"This directory already contains a csproj or {ModProject.ManifestName} file");
                 return 1;
@@ -68,8 +79,8 @@ internal static class InitTool
         }
         else
         {
-            if (HasExistingProject(directory) && !Prompt.Confirm(
-                    $"This directory already contains a csproj or {ModProject.ManifestName} file. Creating here may affect the existing project. Continue?",
+            if (inPlace && HasExistingProject(directory) && !Prompt.Confirm(
+                    $"This directory already contains a csproj or {ModProject.ManifestName} file. Initializing here may affect the existing project. Continue?",
                     defaultYes: false, warn: true))
                 return 0;
 
@@ -80,17 +91,19 @@ internal static class InitTool
             }
         }
 
-        return Submit(directory, fields, here, upgrade);
+        return Submit(directory, fields, inPlace, upgrade);
     }
 
     //BuildFields the form fields in positional argument order, changing one place keeps both in sync
-    private static List<FormField> BuildFields(string directory, bool here) => new()
+    private static List<FormField> BuildFields(string directory, bool inPlace) => new()
     {
         //Only the name is required, the rest may stay empty and fall back to the template or defaults
-        //The name is validated on every keystroke, an existing directory is an error and invalid characters a warning
+        //init offers the directory name as the answer, since that is what the folder is already called
+        //The name is validated on every keystroke, a taken subdirectory is an error and invalid characters a warning
         new("name", "Mod name", required: true)
         {
-            Validate = value => ValidateName(directory, value, here),
+            Value = inPlace ? Path.GetFileName(Path.TrimEndingDirectorySeparator(directory)) : string.Empty,
+            Validate = value => ValidateName(directory, value, inPlace),
         },
         new("id", "Mod id"),
         new("description", "Description"),
@@ -100,8 +113,10 @@ internal static class InitTool
         new("license", "License"),
     };
 
+    private static string CommandOf(bool inPlace) => inPlace ? "init" : "new";
+
     //Submit the shared tail of both entry points, validating the name and directory before materializing
-    private static int Submit(string directory, List<FormField> fields, bool here, bool upgrade)
+    private static int Submit(string directory, List<FormField> fields, bool inPlace, bool upgrade)
     {
         string Value(string key) => fields.First(field => field.Key == key).Value.Trim();
 
@@ -119,8 +134,8 @@ internal static class InitTool
         }
 
         //The interactive path is guarded by form highlighting, this argument path has no watcher so the check moves here
-        //Creating in place has no subdirectory to collide with, the existing file check already ran
-        if (!here && Directory.Exists(Path.Combine(directory, name)))
+        //new writes into a subdirectory, so a taken one is refused; init has no subdirectory to collide with
+        if (!inPlace && Directory.Exists(Path.Combine(directory, name)))
         {
             Console.WriteLine($"A directory named {name} already exists");
             return 1;
@@ -136,14 +151,14 @@ internal static class InitTool
             Value("sources"),
             Value("license"));
 
-        return Execute(directory, answers, here, upgrade);
+        return Execute(directory, answers, inPlace, upgrade);
     }
 
     //Execute creates the project, fills in the manifest fields, deletes the template icon and draws a new one
     //Separated from collection so this chain can run without interaction
-    private static int Execute(string directory, Answers answers, bool here, bool upgrade)
+    private static int Execute(string directory, Answers answers, bool inPlace, bool upgrade)
     {
-        var target = here ? directory : Path.Combine(directory, answers.Name);
+        var target = inPlace ? directory : Path.Combine(directory, answers.Name);
         if (!ExtractTemplate(target, answers.Name))
             return 1;
 
@@ -260,12 +275,12 @@ internal static class InitTool
         return chars.ToArray();
     }
 
-    //ValidateName live validation of the name, an existing directory is an error, special characters a warning and empty is neutral
-    private static FieldState ValidateName(string directory, string value, bool here)
+    //ValidateName live validation of the name, a taken subdirectory is an error, special characters a warning and empty is neutral
+    private static FieldState ValidateName(string directory, string value, bool inPlace)
     {
         if (string.IsNullOrWhiteSpace(value))
             return FieldState.Normal;
-        if (!here && Directory.Exists(Path.Combine(directory, value)))
+        if (!inPlace && Directory.Exists(Path.Combine(directory, value)))
             return FieldState.Error;
         return value.IndexOfAny(BadNameChars) >= 0 ? FieldState.Warn : FieldState.Normal;
     }

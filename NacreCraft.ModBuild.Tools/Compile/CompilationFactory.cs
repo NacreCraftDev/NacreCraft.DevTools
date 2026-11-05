@@ -198,12 +198,13 @@ public static class CompilationFactory
     private static CSharpCompilationOptions CompilationOptionsOf(CompileOptions options, string root)
     {
         var specific = new Dictionary<string, ReportDiagnostic>(StringComparer.OrdinalIgnoreCase);
-        foreach (var id in Ids(options.NoWarn))
-            specific[id] = ReportDiagnostic.Suppress;
-        foreach (var id in Ids(options.WarningsAsErrors))
-            specific[id] = ReportDiagnostic.Error;
+        //the order follows the compiler: a suppression wins over an id that was promoted, and the demotion comes first
         foreach (var id in Ids(options.WarningsNotAsErrors))
             specific[id] = ReportDiagnostic.Warn;
+        foreach (var id in Ids(options.WarningsAsErrors))
+            specific[id] = ReportDiagnostic.Error;
+        foreach (var id in Ids(options.NoWarn))
+            specific[id] = ReportDiagnostic.Suppress;
 
         //the analysis level only sets defaults, so an explicit switch above always wins
         //a project that turns every warning into an error does the same to the rules the level enables

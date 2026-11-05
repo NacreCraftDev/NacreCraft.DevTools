@@ -10,6 +10,7 @@ internal static class ToolFilter
     [
         "icon",
         "init",
+        "new",
         "template",
         "add",
         "restore",
