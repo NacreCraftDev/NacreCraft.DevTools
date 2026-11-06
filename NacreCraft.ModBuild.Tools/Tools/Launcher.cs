@@ -6,18 +6,23 @@ using NacreCraft.ModBuild.Core;
 namespace NacreCraft.ModBuild.Tools;
 
 //What a launch brings up: the layer assembly to load, the entry type inside it and the mod environment to bootstrap
-internal readonly record struct LaunchTarget(string Assembly, string Entry, string Environment)
+//ArgsFile is the argument file the entry merges next to the program root
+internal readonly record struct LaunchTarget(string Assembly, string Entry, string Environment, string ArgsFile)
 {
     //The dedicated server
-    public static readonly LaunchTarget Server = new("NacreCraft.Server", "NacreCraft.Game.ServerMain", "Server");
+    public static readonly LaunchTarget Server =
+        new("NacreCraft.Server", "NacreCraft.Game.ServerMain", "Server", "Server.Args");
 
     //The client
-    public static readonly LaunchTarget Client = new("NacreCraft.Client", "NacreCraft.Client.ClientMain", "Client");
+    public static readonly LaunchTarget Client =
+        new("NacreCraft.Client", "NacreCraft.Client.ClientMain", "Client", "Client.Args");
 }
 
 //Launcher loads a kernel layer dynamically and runs it
-//The flow matches NacreCraft.ServerExe and NacreCraft.ClientExe, except there are no compile-time kernel references,
-//everything is resolved by name; both roles share one run folder, so switching keeps the staged mods and the assets
+//The sequence follows the NacreCraft.Loader entry: arm the early crash guard, register the kernel resolver, point the
+//program root at the run folder, merge the side's argument file, bootstrap the mods, then hand the command line to the
+//layer. Everything is resolved by name, since there are no compile-time kernel references; both roles share one run
+//folder, so switching keeps the staged mods and the assets
 internal static class Launcher
 {
     //RunDirectoryName is the run folder holding saves, logs and config
@@ -62,6 +67,9 @@ internal static class Launcher
 
     private const string ModLoaderAssemblyName = "NacreCraft.ModLoader";
 
+    //BootAssemblyName the boot layer carrying the resolver, the crash guard and the program root
+    private const string BootAssemblyName = "NacreCraft.Boot";
+
     //ModApiAssemblyName the mod api assembly name
     private const string ModApiAssemblyName = "NacreCraft.ModApi";
 
@@ -105,28 +113,90 @@ internal static class Launcher
         Environment.SetEnvironmentVariable(AssemblySearchPathVariable,
             string.IsNullOrEmpty(namedSearchPath) ? source : namedSearchPath + Path.PathSeparator + source);
 
-        //The main library loads first so the embedded resolver and the program root are set before other kernel assemblies resolve
-        var main = Load(KernelPath(source, "NacreCraft.dll"));
-        main.GetType("NacreCraft.EmbeddedAssemblyLoader", throwOnError: true)!
-            .GetMethod("Initialize")!.Invoke(null, null);
-        main.GetType("NacreCraft.AppPaths", throwOnError: true)!
+        //The boot layer carries the resolver and the program root; it sits beside the executable, so it is loaded before
+        //anything reads AppPaths or resolves a sub-library, and the log directory follows the run folder from then on
+        var boot = Load(KernelPath(source, BootAssemblyName + ".dll"));
+        boot.GetType("NacreCraft.EmbeddedAssemblyLoader", throwOnError: true)!
+            .GetMethod("Initialize", Type.EmptyTypes)!.Invoke(null, null);
+        //The program root setter logs through the log sink, and the sink can only be found once the root points at the run
+        //folder; preloading it breaks that circle, and the loader never injects the sink anyway
+        LoadLogging(run, source);
+        //the root is pointed at the run folder before anything else resolves, since the kernel directory hangs off it
+        boot.GetType("NacreCraft.AppPaths", throwOnError: true)!
             .GetMethod("SetOverride")!.Invoke(null, new object?[] { run });
+        //armed after the root, since its first line logs through the same sink
+        boot.GetType("NacreCraft.Boot.EarlyCrashGuard", throwOnError: true)!
+            .GetMethod("Install", Type.EmptyTypes)!.Invoke(null, null);
+
+        var startupArgs = MergeArgsFile(args, run, target);
 
         //The log sink must be enabled before mod bootstrap, since the injection and kernel Initialize come after it and debug output would otherwise be lost
-        EnableDebug(args);
+        EnableDebug(startupArgs);
 
         //Mod bootstrap must run before any layer type is resolved
+        //The entry points take the problems back instead of drawing them, so the failure window can wait for the language
+        //table; a console run prints them and goes on, which is where the mod author is already looking
         var loader = Load(KernelPath(source, ModLoaderAssemblyName + ".dll"));
         var bootstrap = loader.GetType("NacreCraft.ModLoader.ModBootstrap", throwOnError: true)!;
         var environment = loader.GetType("NacreCraft.ModLoader.ModEnvironment", throwOnError: true)!;
-        bootstrap.GetMethod("Run")!.Invoke(null, new object?[] { Enum.Parse(environment, target.Environment), null });
+        var result = bootstrap.GetMethod("Run")!.Invoke(null,
+            new object?[] { Enum.Parse(environment, target.Environment), null });
+        ReportProblems(result);
 
         //The layer goes through the kernel resolver, which the bootstrap already preloaded as a rewritten assembly when injection applies
         //Loading it by path again would produce a second copy with mismatched types and undo that injection
         var layer = AssemblyLoadContext.Default.LoadFromAssemblyName(new AssemblyName(target.Assembly));
         layer.GetType(target.Entry, throwOnError: true)!
-            .GetMethod("Run")!.Invoke(null, new object?[] { args });
+            .GetMethod("Run")!.Invoke(null, new object?[] { startupArgs });
         return 0;
+    }
+
+    //LoadLogging preloads the log sink from the kernel folder, which the program root setter and the crash guard both log through
+    //The copy in the source directory is the fallback for a layout that keeps it beside the executable instead
+    private static void LoadLogging(string run, string source)
+    {
+        var path = Path.Combine(run, ProjectLayout.KernelFolder, "NacreCraft.Logging.dll");
+        if (!File.Exists(path))
+            path = KernelPath(source, "NacreCraft.Logging.dll");
+
+        try
+        {
+            AssemblyLoadContext.Default.LoadFromAssemblyPath(path);
+        }
+        catch (Exception e)
+        {
+            Trace.Log($"cannot preload the log sink from {path}: {e.GetType().Name}: {e.Message}");
+        }
+    }
+
+    //MergeArgsFile merges the side's argument file next to the program root, the same step every entry point performs
+    //The run folder is the program root by the time this runs, so the file is the one a user dropped there
+    private static string[] MergeArgsFile(string[] args, string run, LaunchTarget target)
+    {
+        try
+        {
+            var main = AssemblyLoadContext.Default.LoadFromAssemblyName(new AssemblyName("NacreCraft"));
+            var merge = main.GetType("NacreCraft.LaunchArgsFile", throwOnError: false)?.GetMethod("Merge");
+            if (merge?.Invoke(null, new object?[] { args, Path.Combine(run, target.ArgsFile) }) is string[] merged)
+                return merged;
+        }
+        catch (Exception e)
+        {
+            Trace.Log($"cannot merge {target.ArgsFile}: {e.GetType().Name}: {e.Message}");
+        }
+
+        return args;
+    }
+
+    //ReportProblems prints what the mod bootstrap collected, which the entry points hand to the failure window
+    private static void ReportProblems(object? result)
+    {
+        var problems = result?.GetType().GetProperty("Problems")?.GetValue(result);
+        if (problems is not IEnumerable<string> lines)
+            return;
+
+        foreach (var line in lines)
+            Console.Error.WriteLine($"warning: {line}");
     }
 
     //PointNativeSearchPath registers the runtime's native folder with the loader
@@ -196,20 +266,20 @@ internal static class Launcher
     private static extern IntPtr AddDllDirectory(string newDirectory);
 
     //EnableDebug turns on the global debug mode and log levels for --debug
-    //Same purpose as BootMods in the exe entries, except the types are not available at compile time so the two embedded libraries are loaded by name
+    //Same purpose as the entry points, except the types are not available at compile time so the two embedded libraries are loaded by name
     private static void EnableDebug(string[] args)
     {
         if (Array.IndexOf(args, "--debug") < 0)
             return;
 
         var config = AssemblyLoadContext.Default.LoadFromAssemblyName(new AssemblyName("NacreCraft.Config"));
-        var util = AssemblyLoadContext.Default.LoadFromAssemblyName(new AssemblyName("NacreCraft.Util"));
+        var logging = AssemblyLoadContext.Default.LoadFromAssemblyName(new AssemblyName("NacreCraft.Logging"));
 
         config.GetType("NacreCraft.Config.DebugMode", throwOnError: true)!
             .GetProperty("IsEnabled")!.SetValue(null, true);
 
-        var log = util.GetType("NacreCraft.Logging.Log", throwOnError: true)!;
-        var level = Enum.Parse(util.GetType("NacreCraft.Logging.LogLevel", throwOnError: true)!, "Debug");
+        var log = logging.GetType("NacreCraft.Logging.Log", throwOnError: true)!;
+        var level = Enum.Parse(logging.GetType("NacreCraft.Logging.LogLevel", throwOnError: true)!, "Debug");
         log.GetMethod("SetConsoleLevel")!.Invoke(null, new[] { level });
         log.GetMethod("SetFileLevel")!.Invoke(null, new[] { level });
         log.GetMethod("SetVerbose")!.Invoke(null, new object?[] { true });
@@ -254,7 +324,9 @@ internal static class Launcher
     {
         Directory.CreateDirectory(destination);
 
-        var pattern = includeModLoader ? "NacreCraft*.dll" : "NacreCraft.*.dll";
+        //The main library travels with the sub-libraries: nothing loads it by path anymore, so the layer reaches it through
+        //the kernel resolver like every other one
+        const string pattern = "NacreCraft*.dll";
         //names this sync is responsible for, which is what tells a leftover apart from something else in the folder
         var expected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var copied = 0;
