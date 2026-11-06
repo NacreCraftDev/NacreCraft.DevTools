@@ -8,7 +8,7 @@ import {
     TransportKind,
 } from "vscode-languageclient/node";
 import { Configuration } from "./config";
-import { FinishedParams, NcmActions } from "./actions";
+import { FinishedParams, PitActions } from "./actions";
 import { I18n } from "./i18n";
 import { Log } from "./log";
 import { NuGetCache } from "./nugetCache";
@@ -48,7 +48,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             { scheme: "file", language: "json", pattern: "**/ncmod.json" },
             //the whole project is checked for a source save, the editor only has to hand the document over
             { scheme: "file", language: "csharp", pattern: "**/*.cs" },
-            //task scripts complete from the tracked buffer, so an unsaved script still sees the ncm api
+            //task scripts complete from the tracked buffer, so an unsaved script still sees the pit api
             { scheme: "file", language: "javascript", pattern: "**/*.{js,mjs,cjs}" },
         ],
         //the server fetches the kernel only when this is on, which is what keeps opening a project off the network
@@ -121,23 +121,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         watcher.onDidDelete(changed)
     );
 
-    //the side bar buttons drive the server, which owns the ncm processes and the interrupt that stops them
-    NcmActions.attach(client);
+    //the side bar buttons drive the server, which owns the pit processes and the interrupt that stops them
+    PitActions.attach(client);
     client.onNotification(
         "nacrecraft/progress",
         (params: { action: string; message: string }) =>
-            NcmActions.progress(params.action, params.message)
+            PitActions.progress(params.action, params.message)
     );
     client.onNotification(
         "nacrecraft/finished",
         (params: FinishedParams) => {
-            NcmActions.finished(params);
+            PitActions.finished(params);
             SettingsPanel.taskFinished(params);
         }
     );
     client.onNotification(
         "nacrecraft/state",
-        (params: { running: string[] }) => NcmActions.state(params.running)
+        (params: { running: string[] }) => PitActions.state(params.running)
     );
 
     Log.setStatus(I18n.t("status.startingServer"));
@@ -370,8 +370,8 @@ function serverIn(
             "apphost",
             rid,
             process.platform === "win32"
-                ? "NacreCraft.NcMod.LangServer.exe"
-                : "NacreCraft.NcMod.LangServer"
+                ? "NacreCraft.Pit.LanguageServer.exe"
+                : "NacreCraft.Pit.LanguageServer"
         );
 
         if (fs.existsSync(apphost)) {
@@ -391,14 +391,14 @@ function serverIn(
     const executable = path.join(
         directory,
         process.platform === "win32"
-            ? "NacreCraft.NcMod.LangServer.exe"
-            : "NacreCraft.NcMod.LangServer"
+            ? "NacreCraft.Pit.LanguageServer.exe"
+            : "NacreCraft.Pit.LanguageServer"
     );
     if (fs.existsSync(executable)) {
         return { command: executable, args: [] };
     }
 
-    const dll = path.join(directory, "NacreCraft.NcMod.LangServer.dll");
+    const dll = path.join(directory, "NacreCraft.Pit.LanguageServer.dll");
     return fs.existsSync(dll)
         ? { command: dotnetCommand(), args: [dll] }
         : undefined;

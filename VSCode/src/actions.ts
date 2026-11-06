@@ -191,10 +191,10 @@ interface Pending {
     finish: (() => void) | undefined;
 }
 
-//NcmActions drives the commands through the language server
+//PitActions drives the commands through the language server
 //The server owns the processes, which is what lets it stop a launch with a console interrupt; the editor only sends
 //requests and shows the output and the result that come back
-export class NcmActions {
+export class PitActions {
     //the command line names and the translated labels differ for the two launches
     private static readonly labels: Record<SidebarAction, string> = {
         build: "action.build",
@@ -223,34 +223,34 @@ export class NcmActions {
 
     //Attach gives the actions the connection they talk over
     public static attach(client: LanguageClient): void {
-        NcmActions.client = client;
+        PitActions.client = client;
     }
 
     //Ready whether the handshake finished; a request sent before it never settles
     public static get ready(): boolean {
-        return NcmActions.client?.state === State.Running;
+        return PitActions.client?.state === State.Running;
     }
 
     //IsRunning whether the language server still holds a process for the action
     public static isRunning(action: LaunchAction): boolean {
-        return NcmActions.running.has(action);
+        return PitActions.running.has(action);
     }
 
     public static async run(action: SidebarAction): Promise<void> {
-        const client = NcmActions.client;
+        const client = PitActions.client;
         if (
             !client ||
             ProjectLocator.find() === null ||
-            NcmActions.pending.has(action)
+            PitActions.pending.has(action)
         ) {
             return;
         }
 
-        const title = I18n.t(NcmActions.labels[action]);
+        const title = I18n.t(PitActions.labels[action]);
         Log.setStatus(title);
 
         const entry: Pending = { progress: undefined, finish: undefined };
-        NcmActions.pending.set(action, entry);
+        PitActions.pending.set(action, entry);
 
         //the notification opens before the request leaves, so no output line can arrive before it
         void vscode.window.withProgress(
@@ -272,10 +272,10 @@ export class NcmActions {
             });
 
             if (!accepted) {
-                NcmActions.abandon(action);
+                PitActions.abandon(action);
             }
         } catch (error) {
-            NcmActions.settle(action, {
+            PitActions.settle(action, {
                 action,
                 ok: false,
                 code: -1,
@@ -286,12 +286,12 @@ export class NcmActions {
 
     //stop asks the server to interrupt the launch, which is a Ctrl+C on its side
     public static async stop(action: LaunchAction): Promise<void> {
-        const client = NcmActions.client;
+        const client = PitActions.client;
         if (!client) {
             return;
         }
 
-        Log.setStatus(I18n.t(NcmActions.stopLabels[action]));
+        Log.setStatus(I18n.t(PitActions.stopLabels[action]));
         try {
             await client.sendRequest<boolean>("nacrecraft/stop", { action });
         } catch (error) {
@@ -301,7 +301,7 @@ export class NcmActions {
 
     //asm runs one inspection inside the server, which links the asm code directly instead of starting a process
     public static async asm(request: AsmRequest): Promise<AsmResult> {
-        const client = NcmActions.client;
+        const client = PitActions.client;
         if (!client) {
             return { ok: false, error: I18n.t("asm.noServer") };
         }
@@ -315,7 +315,7 @@ export class NcmActions {
 
     //references reads the kernel assemblies, the mod api switch and the declared packages
     public static async references(): Promise<ReferencesResult> {
-        const client = NcmActions.client;
+        const client = PitActions.client;
         if (!client) {
             return { ok: false, error: I18n.t("asm.noServer") };
         }
@@ -334,7 +334,7 @@ export class NcmActions {
     public static async referenceSet(
         change: ReferenceChange
     ): Promise<ReferencesResult> {
-        const client = NcmActions.client;
+        const client = PitActions.client;
         if (!client) {
             return { ok: false, error: I18n.t("asm.noServer") };
         }
@@ -351,7 +351,7 @@ export class NcmActions {
 
     //config reads every setting the project config may declare, the file's own values included
     public static async config(): Promise<ConfigResult> {
-        const client = NcmActions.client;
+        const client = PitActions.client;
         if (!client) {
             return { ok: false, error: I18n.t("asm.noServer") };
         }
@@ -369,7 +369,7 @@ export class NcmActions {
         value: string,
         remove: boolean
     ): Promise<ConfigResult> {
-        const client = NcmActions.client;
+        const client = PitActions.client;
         if (!client) {
             return { ok: false, error: I18n.t("asm.noServer") };
         }
@@ -386,7 +386,7 @@ export class NcmActions {
 
     //tasks reads what the project declares, the override default and the task xml
     public static async tasks(): Promise<TasksResult> {
-        const client = NcmActions.client;
+        const client = PitActions.client;
         if (!client) {
             return { ok: false, error: I18n.t("asm.noServer") };
         }
@@ -404,7 +404,7 @@ export class NcmActions {
         xml: string,
         config = ""
     ): Promise<TasksResult> {
-        const client = NcmActions.client;
+        const client = PitActions.client;
         if (!client) {
             return { ok: false, error: I18n.t("asm.noServer") };
         }
@@ -424,7 +424,7 @@ export class NcmActions {
         name: string,
         config = ""
     ): Promise<TasksResult> {
-        const client = NcmActions.client;
+        const client = PitActions.client;
         if (!client) {
             return { ok: false, error: I18n.t("asm.noServer") };
         }
@@ -441,7 +441,7 @@ export class NcmActions {
 
     //tasksOverride writes the default that lets a task replace a built-in tool
     public static async tasksOverride(value: boolean): Promise<TasksResult> {
-        const client = NcmActions.client;
+        const client = PitActions.client;
         if (!client) {
             return { ok: false, error: I18n.t("asm.noServer") };
         }
@@ -461,7 +461,7 @@ export class NcmActions {
         name: string,
         approve: boolean
     ): Promise<TaskRunResult> {
-        const client = NcmActions.client;
+        const client = PitActions.client;
         if (!client) {
             return { ok: false, error: I18n.t("asm.noServer") };
         }
@@ -482,7 +482,7 @@ export class NcmActions {
         line: number,
         column: number
     ): Promise<ScriptCompletionResult> {
-        const client = NcmActions.client;
+        const client = PitActions.client;
         if (!client) {
             return { ok: false, error: I18n.t("asm.noServer") };
         }
@@ -501,7 +501,7 @@ export class NcmActions {
     public static async scriptCheck(
         source: string
     ): Promise<ScriptCheckResult> {
-        const client = NcmActions.client;
+        const client = PitActions.client;
         if (!client) {
             return { ok: false, error: I18n.t("asm.noServer") };
         }
@@ -521,7 +521,7 @@ export class NcmActions {
         query: string,
         source: string
     ): Promise<PackageSearchResult> {
-        const client = NcmActions.client;
+        const client = PitActions.client;
         if (!client) {
             return { ok: false, error: I18n.t("asm.noServer") };
         }
@@ -542,7 +542,7 @@ export class NcmActions {
         version: string,
         source: string
     ): Promise<ReadmeResult> {
-        const client = NcmActions.client;
+        const client = PitActions.client;
         if (!client) {
             return { ok: false, error: I18n.t("asm.noServer") };
         }
@@ -562,7 +562,7 @@ export class NcmActions {
         id: string,
         source: string
     ): Promise<VersionsResult> {
-        const client = NcmActions.client;
+        const client = PitActions.client;
         if (!client) {
             return { ok: false, error: I18n.t("asm.noServer") };
         }
@@ -579,8 +579,8 @@ export class NcmActions {
 
     //progress shows one line of output inside the notification of that command
     public static progress(action: string, message: string): void {
-        const entry = NcmActions.pending.get(action as SidebarAction);
-        entry?.progress?.report({ message: NcmActions.shorten(message) });
+        const entry = PitActions.pending.get(action as SidebarAction);
+        entry?.progress?.report({ message: PitActions.shorten(message) });
     }
 
     //finished closes the notification and reports the result
@@ -590,34 +590,34 @@ export class NcmActions {
             return;
         }
 
-        NcmActions.settle(params.action, params);
+        PitActions.settle(params.action, params);
     }
 
     //state replaces which launches are running, as reported by the server
     public static state(running: string[]): void {
-        NcmActions.running.clear();
+        PitActions.running.clear();
         for (const action of running) {
-            NcmActions.running.add(action);
+            PitActions.running.add(action);
         }
-        NcmActions.changed.fire();
+        PitActions.changed.fire();
     }
 
     //abandon closes a command the server refused to start
     private static abandon(action: SidebarAction): void {
-        const entry = NcmActions.pending.get(action);
-        NcmActions.pending.delete(action);
+        const entry = PitActions.pending.get(action);
+        PitActions.pending.delete(action);
         entry?.finish?.();
         Log.setStatus("");
     }
 
     private static settle(action: SidebarAction, result: FinishedParams): void {
-        const entry = NcmActions.pending.get(action);
-        NcmActions.pending.delete(action);
+        const entry = PitActions.pending.get(action);
+        PitActions.pending.delete(action);
         entry?.finish?.();
         Log.setStatus("");
 
         if (!result.ok) {
-            NcmActions.fail(result.output);
+            PitActions.fail(result.output);
             return;
         }
 
@@ -632,7 +632,7 @@ export class NcmActions {
         }
     }
 
-    //fail shows the tail of the output, which carries the error ncm ended on
+    //fail shows the tail of the output, which carries the error pit ended on
     private static fail(output: string): void {
         const tail = stripAnsi(output)
             .trim()

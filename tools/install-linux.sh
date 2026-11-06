@@ -1,14 +1,14 @@
 #!/usr/bin/env sh
 # One-shot installer for the NacreCraft development toolchain on Linux.
-# Installs the .NET 10 SDK, the dotnet new project template and the ncm CLI.
+# Installs the .NET 10 SDK, the dotnet new project template and the pit CLI.
 # Idempotent: existing pieces are skipped or updated in place, so reruns are safe.
 # Usage: ./tools/install-linux.sh
 
 set -eu
 
 CHANNEL="10.0"
-TEMPLATE_ID="NacreCraft.ModsProjectType"
-TOOL_ID="NacreCraft.ModBuild.Tools"
+TEMPLATE_ID="NacreCraft.ModSDK.Template"
+TOOL_ID="NacreCraft.Pit"
 INSTALL_ROOT="$HOME/.dotnet"
 TOOLS_DIR="$INSTALL_ROOT/tools"
 
@@ -55,7 +55,7 @@ else
     echo "installed SDK $(dotnet --version)"
 fi
 
-#Tools directory must also be on PATH for ncm to be callable later in this session
+#Tools directory must also be on PATH for pit to be callable later in this session
 PATH="$TOOLS_DIR:$PATH"
 export PATH
 
@@ -67,7 +67,7 @@ echo "==> installing project template"
     dotnet new install "$TEMPLATE_ID" --force
 )
 
-echo "==> installing ncm"
+echo "==> installing pit"
 
 if dotnet tool list -g 2>/dev/null | grep -qi "$TOOL_ID"; then
     dotnet tool update -g "$TOOL_ID"
@@ -77,15 +77,20 @@ fi
 
 echo "==> verifying"
 
-if TestCommand ncm; then
-    echo "ncm ok -> $(command -v ncm)"
+if TestCommand pit; then
+    echo "pit ok -> $(command -v pit)"
 else
-    echo "ncm not on PATH in this session, open a new shell"
+    echo "pit not on PATH in this session, open a new shell"
 fi
+
+echo "==> writing the mpit shortcut"
+
+#dotnet tools have no install hook, so the shortcut is written here through the tool itself
+"$TOOLS_DIR/pit" alias || echo "mpit was not written, run 'pit alias' later"
 
 echo ""
 echo "done"
 echo ""
-echo "if dotnet or ncm is not found in a new shell, add these to your shell profile:"
+echo "if dotnet or pit is not found in a new shell, add these to your shell profile:"
 echo "  export DOTNET_ROOT=\"$INSTALL_ROOT\""
 echo "  export PATH=\"$INSTALL_ROOT:$TOOLS_DIR:\$PATH\""

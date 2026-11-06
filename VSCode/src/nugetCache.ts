@@ -1,4 +1,4 @@
-import { NcmActions, PackageInfo, PackageSearchResult } from "./actions";
+import { PitActions, PackageInfo, PackageSearchResult } from "./actions";
 
 //NuGetCache keeps feed answers for the session
 //The extension preloads the default listing once, so opening the tab or switching back to it does not ask again;
@@ -34,7 +34,7 @@ export class NuGetCache {
             }
         }
 
-        const call = NcmActions.nugetSearch(query, source).then((result) => {
+        const call = PitActions.nugetSearch(query, source).then((result) => {
             //an answer a newer request replaced must not overwrite the cache
             if (NuGetCache.inflight.get(key) === call) {
                 NuGetCache.inflight.delete(key);

@@ -2,13 +2,13 @@ import { randomBytes } from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
-import { AsmRequest, NcmActions } from "./actions";
+import { AsmRequest, PitActions } from "./actions";
 import { stripAnsi } from "./ansi";
 import { Configuration } from "./config";
 import { CreateValues, ProjectCreator } from "./creator";
 import { I18n } from "./i18n";
 import { Log } from "./log";
-import { Ncm } from "./ncm";
+import { Pit } from "./pit";
 import { NuGetCache } from "./nugetCache";
 import { panelMarkup } from "./panelMarkup";
 import { ProjectLocator } from "./project";
@@ -263,7 +263,7 @@ export class SettingsPanel {
 
     //requestConfig sends the settings the project may declare, which the page lists
     private static async requestConfig(): Promise<void> {
-        const result = await NcmActions.config();
+        const result = await PitActions.config();
         void SettingsPanel.current?.webview.postMessage({
             type: "config",
             ...result,
@@ -272,7 +272,7 @@ export class SettingsPanel {
 
     //setConfig writes or removes one setting and sends the list that results from it
     private static async setConfig(message: PageMessage): Promise<void> {
-        const result = await NcmActions.configSet(
+        const result = await PitActions.configSet(
             message.key ?? "",
             message.value ?? "",
             message.remove === true
@@ -286,7 +286,7 @@ export class SettingsPanel {
 
     //requestTasks sends what the project declares, which the page lists
     private static async requestTasks(): Promise<void> {
-        const result = await NcmActions.tasks();
+        const result = await PitActions.tasks();
         void SettingsPanel.current?.webview.postMessage({
             type: "tasks",
             ...result,
@@ -295,7 +295,7 @@ export class SettingsPanel {
 
     //saveTask replaces one task, or appends a new one when the name is empty
     private static async saveTask(message: PageMessage): Promise<void> {
-        const result = await NcmActions.tasksSaveTask(
+        const result = await PitActions.tasksSaveTask(
             message.name ?? "",
             message.xml ?? "",
             message.config ?? ""
@@ -309,7 +309,7 @@ export class SettingsPanel {
 
     //removeTask drops one declared task and answers with what remains
     private static async removeTask(message: PageMessage): Promise<void> {
-        const result = await NcmActions.tasksRemove(
+        const result = await PitActions.tasksRemove(
             message.name ?? "",
             message.config ?? ""
         );
@@ -322,7 +322,7 @@ export class SettingsPanel {
 
     //setTasksOverride writes the switch that lets a task replace a built-in tool
     private static async setTasksOverride(message: PageMessage): Promise<void> {
-        const result = await NcmActions.tasksOverride(message.enabled === true);
+        const result = await PitActions.tasksOverride(message.enabled === true);
         void SettingsPanel.current?.webview.postMessage({
             type: "tasks",
             ...result,
@@ -332,7 +332,7 @@ export class SettingsPanel {
     //runTask starts one task, asking first when it replaces a built-in tool
     //The tool itself refuses to confirm from a pipe, so the question belongs to the editor
     public static async runTask(name: string, approve = false): Promise<void> {
-        const result = await NcmActions.taskRun(name, approve);
+        const result = await PitActions.taskRun(name, approve);
 
         if (result.needsApproval) {
             const steps = (result.steps ?? []).join("\n");
@@ -371,7 +371,7 @@ export class SettingsPanel {
 
     //scriptComplete answers the javascript editor with the members the runtime exposes at the cursor
     private static async scriptComplete(message: PageMessage): Promise<void> {
-        const result = await NcmActions.scriptComplete(
+        const result = await PitActions.scriptComplete(
             message.source ?? "",
             message.line ?? 1,
             message.column ?? 1
@@ -386,7 +386,7 @@ export class SettingsPanel {
 
     //scriptCheck answers the javascript editor with the first syntax error, if there is one
     private static async scriptCheck(message: PageMessage): Promise<void> {
-        const result = await NcmActions.scriptCheck(message.source ?? "");
+        const result = await PitActions.scriptCheck(message.source ?? "");
         void SettingsPanel.current?.webview.postMessage({
             type: "scriptCheck",
             id: message.id,
@@ -439,7 +439,7 @@ export class SettingsPanel {
             return;
         }
 
-        const result = await NcmActions.asm({
+        const result = await PitActions.asm({
             file: message.file,
             mode: message.mode,
             query: message.query,
@@ -474,7 +474,7 @@ export class SettingsPanel {
 
     //extractResource asks where to write one resource, then saves the bytes the server read
     private static async extractResource(file: string, name: string): Promise<void> {
-        const result = await NcmActions.asm({ file, mode: "extract", query: name });
+        const result = await PitActions.asm({ file, mode: "extract", query: name });
         if (!result.ok || !result.data) {
             void vscode.window.showErrorMessage(result.error ?? I18n.t("asm.failed"));
             return;
@@ -506,7 +506,7 @@ export class SettingsPanel {
             return;
         }
 
-        const result = await NcmActions.asm({
+        const result = await PitActions.asm({
             file,
             mode: "embed",
             items: picked.map((item) => item.fsPath),
@@ -532,7 +532,7 @@ export class SettingsPanel {
             return;
         }
 
-        const result = await NcmActions.asm({ file, mode: "remove", items: [name] });
+        const result = await PitActions.asm({ file, mode: "remove", items: [name] });
         void SettingsPanel.current?.webview.postMessage({
             type: "asmEdited",
             ok: result.ok,
@@ -542,7 +542,7 @@ export class SettingsPanel {
 
     //nugetReferences sends the kernel assemblies, the mod api switch and the declared packages
     private static async nugetReferences(id?: number): Promise<void> {
-        const result = await NcmActions.references();
+        const result = await PitActions.references();
         void SettingsPanel.current?.webview.postMessage({
             type: "nugetRefs",
             id,
@@ -552,7 +552,7 @@ export class SettingsPanel {
 
     //nugetSet changes one reference and answers with the references the change produced
     private static async nugetSet(message: PageMessage): Promise<void> {
-        const result = await NcmActions.referenceSet({
+        const result = await PitActions.referenceSet({
             kind: message.kind === "modApi" ? "modApi" : "package",
             remove: message.remove === true,
             id: message.packageId,
@@ -583,7 +583,7 @@ export class SettingsPanel {
 
     //nugetReadme reads the document the package carries, which the description pane renders as markdown
     private static async nugetReadme(message: PageMessage): Promise<void> {
-        const result = await NcmActions.nugetReadme(
+        const result = await PitActions.nugetReadme(
             message.packageId ?? "",
             message.version ?? "",
             message.source ?? ""
@@ -598,7 +598,7 @@ export class SettingsPanel {
 
     //nugetVersions lists every published version, which the description pane offers to install
     private static async nugetVersions(message: PageMessage): Promise<void> {
-        const result = await NcmActions.nugetVersions(
+        const result = await PitActions.nugetVersions(
             message.packageId ?? "",
             message.source ?? ""
         );
@@ -635,7 +635,7 @@ export class SettingsPanel {
         SettingsPanel.current?.webview.postMessage({ type: "openCreate" });
     }
 
-    //create runs ncm init, then offers to open the folder it produced
+    //create runs pit init, then offers to open the folder it produced
     private static async create(values: CreateValues): Promise<void> {
         Log.setStatus(I18n.t("status.creating"));
         Log.info(`creating ${values.name}`);
@@ -675,7 +675,7 @@ export class SettingsPanel {
         }
     }
 
-    //addReference picks the file the project should reference and lets ncm write it into the project
+    //addReference picks the file the project should reference and lets pit write it into the project
     private static async addReference(
         kind: "project" | "assembly"
     ): Promise<void> {
@@ -709,7 +709,7 @@ export class SettingsPanel {
                 : ["add", "file", file];
 
         Log.setStatus(I18n.t("refs.adding"));
-        const result = await Ncm.run(args, I18n.t("refs.adding"));
+        const result = await Pit.run(args, I18n.t("refs.adding"));
         Log.setStatus("");
 
         if (!result.ok) {

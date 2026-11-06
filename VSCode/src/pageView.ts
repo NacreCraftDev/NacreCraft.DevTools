@@ -1,6 +1,6 @@
 import { randomBytes } from "crypto";
 import * as vscode from "vscode";
-import { SidebarAction, NcmActions } from "./actions";
+import { SidebarAction, PitActions } from "./actions";
 import { I18n } from "./i18n";
 import { ProjectLocator } from "./project";
 import { SettingsPanel } from "./settingsPanel";
@@ -19,7 +19,7 @@ export class PageView implements vscode.WebviewViewProvider {
     constructor(private readonly context: vscode.ExtensionContext) {
         //a launch starting or ending flips its button between start and stop
         context.subscriptions.push(
-            NcmActions.changed.event(() => this.refresh())
+            PitActions.changed.event(() => this.refresh())
         );
     }
 
@@ -44,16 +44,16 @@ export class PageView implements vscode.WebviewViewProvider {
             }
 
             if (message.action === "stopclient") {
-                void NcmActions.stop("runclient");
+                void PitActions.stop("runclient");
                 return;
             }
 
             if (message.action === "stopserver") {
-                void NcmActions.stop("runserver");
+                void PitActions.stop("runserver");
                 return;
             }
 
-            void NcmActions.run(message.action as SidebarAction);
+            void PitActions.run(message.action as SidebarAction);
         });
 
         //a mod project wants its page, a plain folder stays on the side bar and shows the create entry there
@@ -83,10 +83,10 @@ export class PageView implements vscode.WebviewViewProvider {
                   ["open", "view.open"],
                   ["build", "action.build"],
                   ["restore", "action.restore"],
-                  NcmActions.isRunning("runclient")
+                  PitActions.isRunning("runclient")
                       ? ["stopclient", "action.stopClient"]
                       : ["runclient", "action.runClient"],
-                  NcmActions.isRunning("runserver")
+                  PitActions.isRunning("runserver")
                       ? ["stopserver", "action.stopServer"]
                       : ["runserver", "action.runServer"],
                   ["clean", "action.clean"],

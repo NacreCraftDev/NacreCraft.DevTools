@@ -13,7 +13,7 @@ $ErrorActionPreference = "Stop"
 
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $devtools = Split-Path -Parent $here
-$project = Join-Path $devtools "NacreCraft.NcMod.LangServer\NacreCraft.NcMod.LangServer.csproj"
+$project = Join-Path $devtools "src\NacreCraft.Pit.LanguageServer\NacreCraft.Pit.LanguageServer.csproj"
 $server = Join-Path $here "server"
 $vsix = Join-Path $here "nacrecraft-ncmod-0.1.0.vsix"
 
@@ -43,13 +43,13 @@ try {
     if ($LASTEXITCODE -ne 0) { exit 1 }
 
     #the server ships once, while each platform keeps a tiny apphost plus the shim that loads it
-    $shim = Join-Path $devtools "NacreCraft.NcMod.LangServer.Shim\NacreCraft.NcMod.LangServer.Shim.csproj"
+    $shim = Join-Path $devtools "src\NacreCraft.Pit.LanguageServer.Shim\NacreCraft.Pit.LanguageServer.Shim.csproj"
     $apphosts = Join-Path $server "apphost"
     Remove-Item -Recurse -Force $apphosts -ErrorAction SilentlyContinue
 
     foreach ($rid in @("win-x64", "linux-x64", "osx-x64", "osx-arm64")) {
         Write-Host "building the $rid apphost"
-        $temp = Join-Path $env:TEMP ("ncm-shim-" + $rid)
+        $temp = Join-Path $env:TEMP ("pit-shim-" + $rid)
         Remove-Item -Recurse -Force $temp -ErrorAction SilentlyContinue
 
         & (Find-Dotnet) publish $shim -c Release -r $rid --self-contained false -o $temp --nologo -v q
@@ -57,22 +57,22 @@ try {
 
         $target = Join-Path $apphosts $rid
         New-Item -ItemType Directory -Force -Path $target | Out-Null
-        Copy-Item (Join-Path $temp "NacreCraft.NcMod.LangServer.dll") $target -Force
-        Copy-Item (Join-Path $temp "NacreCraft.NcMod.LangServer.deps.json") $target -Force
-        Copy-Item (Join-Path $temp "NacreCraft.NcMod.LangServer.runtimeconfig.json") $target -Force
+        Copy-Item (Join-Path $temp "NacreCraft.Pit.LanguageServer.dll") $target -Force
+        Copy-Item (Join-Path $temp "NacreCraft.Pit.LanguageServer.deps.json") $target -Force
+        Copy-Item (Join-Path $temp "NacreCraft.Pit.LanguageServer.runtimeconfig.json") $target -Force
 
         $launcher = if ($rid.StartsWith("win-")) {
-            "NacreCraft.NcMod.LangServer.exe"
+            "NacreCraft.Pit.LanguageServer.exe"
         } else {
-            "NacreCraft.NcMod.LangServer"
+            "NacreCraft.Pit.LanguageServer"
         }
         Copy-Item (Join-Path $temp $launcher) $target -Force
         Remove-Item -Recurse -Force $temp -ErrorAction SilentlyContinue
     }
 
     #the platform apphosts above replace the launchers a plain publish leaves in the server root
-    Remove-Item (Join-Path $server "NacreCraft.NcMod.LangServer.exe") -ErrorAction SilentlyContinue
-    Remove-Item (Join-Path $server "NacreCraft.ModBuild.Tools.exe") -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $server "NacreCraft.Pit.LanguageServer.exe") -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $server "NacreCraft.Pit.exe") -ErrorAction SilentlyContinue
 
     if (-not (Test-Path (Join-Path $here "node_modules"))) {
         Write-Host "installing npm dependencies"

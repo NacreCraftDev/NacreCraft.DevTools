@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    This project is deliberately broken. It is the acceptance fixture for the
+    compile-error advice that pit prints, so it is never built as part of the
+    product and never referenced by it.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <!-- the cases need System.Text, System.Linq and System.IO to be missing on purpose -->
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>NacreCraft.Pit.Test</RootNamespace>
+    <AssemblyName>NacreCraft.Pit.Test</AssemblyName>
+  </PropertyGroup>
+
+</Project>

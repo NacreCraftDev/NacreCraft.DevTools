@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { NcmActions, TaskEntry } from "./actions";
+import { PitActions, TaskEntry } from "./actions";
 import { I18n } from "./i18n";
 import { ProjectLocator } from "./project";
 
@@ -65,14 +65,14 @@ export class TaskTree implements vscode.TreeDataProvider<vscode.TreeItem> {
     }
 
     private async fetch(): Promise<void> {
-        if (ProjectLocator.find() === null || !NcmActions.ready) {
+        if (ProjectLocator.find() === null || !PitActions.ready) {
             this.items = [];
             this.error = "";
             this.loaded = true;
             return;
         }
 
-        const result = await NcmActions.tasks();
+        const result = await PitActions.tasks();
         this.items = result.ok ? result.tasks ?? [] : [];
         this.error = result.ok ? "" : result.error ?? "";
         this.loaded = true;

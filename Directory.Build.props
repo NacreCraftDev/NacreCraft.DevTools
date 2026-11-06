@@ -17,10 +17,10 @@
     <Product>NacreCraft</Product>
     <Copyright>Copyright (c) NacreCraft Contributors</Copyright>
 
-    <!-- ncm and the project template share this version, so bump it here on release -->
-    <VersionPrefix>1.9.33</VersionPrefix>
-    <AssemblyVersion>1.9.33.0</AssemblyVersion>
-    <FileVersion>1.9.33.0</FileVersion>
+    <!-- pit and the project template share this version, so bump it here on release -->
+    <VersionPrefix>2.0.0</VersionPrefix>
+    <AssemblyVersion>2.0.0.0</AssemblyVersion>
+    <FileVersion>2.0.0.0</FileVersion>
   </PropertyGroup>
 
 </Project>

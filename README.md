@@ -1,18 +1,20 @@
-# NacreCraft.DevTools
+# NacreCraft.ModSDK
 
 Development tools for [NacreCraft](https://github.com/NacreCraftDev/NacreCraft) mods.
 
 | Project | Contents |
 |---|---|
-| `NacreCraft.ModBuild.Tools` | `ncm` — the mod development CLI, packaged as a dotnet tool |
-| `NacreCraft.ModsProjectType` | The `dotnet new ncm` project template |
-| `NacreCraft.NcMod.LangServer` | The C# and JavaScript language server used by the editor extension |
+| `src/NacreCraft.Pit` | `pit` — the mod development CLI, packaged as a dotnet tool |
+| `src/NacreCraft.Pit.Experimental` | `pit-exp` — commands that are not ready for release |
+| `src/NacreCraft.ModSDK.Template` | The `dotnet new pit` project template |
+| `src/NacreCraft.Pit.LanguageServer` | The C# and JavaScript language server used by the editor extension |
+| `src/NacreCraft.Pit.Test` | Deliberately broken sources used as the acceptance fixture for the compile advice |
 | `VSCode/` | The `NacreCraft NcMod` VS Code extension |
 | `reference/` | Kernel reference assemblies handed to newly created projects |
 
 ## Install the toolchain
 
-The install scripts set up everything a mod author needs — the .NET 10 SDK, the `dotnet new ncm` project template and the `ncm` CLI — downloading whatever is missing and refreshing what is already installed. They are idempotent, so rerunning one is the update path.
+The install scripts set up everything a mod author needs — the .NET 10 SDK, the `dotnet new pit` project template and the `pit` CLI — downloading whatever is missing and refreshing what is already installed. They are idempotent, so rerunning one is the update path.
 
 | Platform | Script |
 |---|---|
@@ -28,45 +30,48 @@ The install scripts set up everything a mod author needs — the .NET 10 SDK, th
 ./tools/install-linux.sh
 ```
 
+The scripts also write the `mpit` shortcut next to the installed tool, since a dotnet tool cannot run anything at install time. `pit alias` does the same by hand and `pit alias --remove` deletes the shortcut.
+
 Packages come from nuget.org unless a `<PackageSource>` names another feed. Then, from a mod project:
 
 ```powershell
-ncm new <name>                  # create a mod project in a subdirectory named after it
-ncm new <name> <id> <description> <authors> <homepage> <sources> <license>
+pit new <name>                  # create a mod project in a subdirectory named after it
+pit new <name> <id> <description> <authors> <homepage> <sources> <license>
                                 # same fields in the same order, no prompts
                                 # trailing ones may be omitted, empty string skips one
-ncm init                        # initialize the current directory, prompts for the rest
-ncm template example <api>      # write an example for an API type
-ncm template tui                # terminal panel: grade the api usage of the current project
-ncm template gui                # the same catalog and grading in a window
-ncm add nuget <id> [version]    # declare a package dependency in the .ncproj
-ncm add file <path>             # declare a managed dll as a compile reference
-ncm add project <path>          # reference another project in the .ncproj
-ncm restore                     # resolve the declared packages into Build/packages/
-ncm build [--lint]              # diagnose, optionally lint, then build
-ncm clean [target] [--all]      # drop the build cache, a named cache, or every cache
-ncm runserver                   # build the mod and run the server
-ncm runclient                   # build the mod and run the client
-ncm asm <assembly>              # inspect any .NET assembly
-ncm callgraph [options]         # inspect the call graph and report call cycles
-ncm flow [class|file]            # show a class execution order as a tree
-ncm hook                        # check the injection rules of a mod
-ncm icon                        # write a white background mod icon
-ncm tool add|remove|list         # install, remove and list plugins
-ncm tool <plugin> <method>      # run an installed plugin
-ncm upgrade                     # convert a csproj project to a .ncproj one
-ncm update                      # check nuget.org, then update ncm itself
+pit init                        # initialize the current directory, prompts for the rest
+pit template example <api>      # write an example for an API type
+pit template tui                # terminal panel: grade the api usage of the current project
+pit template gui                # the same catalog and grading in a window
+pit add nuget <id> [version]    # declare a package dependency in the .ncproj
+pit add file <path>             # declare a managed dll as a compile reference
+pit add project <path>          # reference another project in the .ncproj
+pit restore                     # resolve the declared packages into Build/packages/
+pit build [--lint]              # diagnose, optionally lint, then build
+pit clean [target] [--all]      # drop the build cache, a named cache, or every cache
+pit runserver                   # build the mod and run the server
+pit runclient                   # build the mod and run the client
+pit asm <assembly>              # inspect any .NET assembly
+pit callgraph [options]         # inspect the call graph and report call cycles
+pit flow [class|file]            # show a class execution order as a tree
+pit hook                        # check the injection rules of a mod
+pit icon                        # write a white background mod icon
+pit tool add|remove|list         # install, remove and list plugins
+pit tool <plugin> <method>      # run an installed plugin
+pit upgrade                     # convert a csproj project to a .ncproj one
+pit update                      # check nuget.org, then update pit itself
+pit alias                       # write the mpit shortcut beside the installed tool
 
-dotnet new ncm -n MyMod         # or create from the template directly
+dotnet new pit -n MyMod         # or create from the template directly
 ```
 
 ## Command reference
 
-`ncm help` lists every tool, `ncm help <tool>` prints one tool's parameters, and `ncm help all` prints every tool's help in one run.
+`pit help` lists every tool, `pit help <tool>` prints one tool's parameters, and `pit help all` prints every tool's help in one run.
 
 ### `new`
 
-Create a mod project in a subdirectory named after it. The template is embedded in `ncm`, so this works without `dotnet new` or a machine-wide template install.
+Create a mod project in a subdirectory named after it. The template is embedded in `pit`, so this works without `dotnet new` or a machine-wide template install.
 
 | Parameter | Description |
 |---|---|
@@ -124,28 +129,28 @@ The rule takes options for the fields that have a closed vocabulary, and only wh
 
 | Option | Default |
 |---|---|
-| `--type <form>` | `CallSite`, one of the injection forms listed under `ncm hook` |
+| `--type <form>` | `CallSite`, one of the injection forms listed under `pit hook` |
 | `--patch-mode <mode>` | `ILRewrite`, the other being `RuntimeInject` |
 | `--placement <place>` | `Replace`, or `Before` / `After` to keep the anchor and insert around it |
 | `--environment <side>` | `both`, or `client` / `server` |
 | `--label <text>` | none, used by `Mark` and `Probe` |
 
-A rule for the same target, method, form and patch mode is refused instead of appended, since the loader keys a rule that way and a second copy would never land. Run `ncm hook` afterwards to check the rule against the target.
+A rule for the same target, method, form and patch mode is refused instead of appended, since the loader keys a rule that way and a second copy would never land. Run `pit hook` afterwards to check the rule against the target.
 
 ```
-ncm add hook NacreCraft.Game.Server.DedicatedServer Tick MyMod.Probe OnTick
-ncm add hook NacreCraft.Test1.Test1Api Farewell MyMod.Probe OnFarewell --type Mark --label farewell --environment server
+pit add hook NacreCraft.Game.Server.DedicatedServer Tick MyMod.Probe OnTick
+pit add hook NacreCraft.Test1.Test1Api Farewell MyMod.Probe OnFarewell --type Mark --label farewell --environment server
 ```
 
 ### `tool`
 
-Install, remove and run plugins. A plugin is a class library: the name is the folder it lives in, the method picks an entry point on the type carrying that name (as its own name or as its full name, so `MyPlugin.Tools.dll` can stand for the class `Tools` in the namespace `MyPlugin`), and that entry point has to be a `public static int` method taking a `string[]`, with its return value becoming ncm's exit code.
+Install, remove and run plugins. A plugin is a class library: the name is the folder it lives in, the method picks an entry point on the type carrying that name (as its own name or as its full name, so `MyPlugin.Tools.dll` can stand for the class `Tools` in the namespace `MyPlugin`), and that entry point has to be a `public static int` method taking a `string[]`, with its return value becoming pit's exit code.
 
 ```
-ncm tool add out/MyPlugin.dll    # copies the dlls beside it into the tool cache
-ncm tool list                    # MyPlugin
-ncm tool MyPlugin Build --release
-ncm tool remove MyPlugin
+pit tool add out/MyPlugin.dll    # copies the dlls beside it into the tool cache
+pit tool list                    # MyPlugin
+pit tool MyPlugin Build --release
+pit tool remove MyPlugin
 ```
 
 | Parameter | Description |
@@ -157,7 +162,7 @@ ncm tool remove MyPlugin
 
 `add`, `remove` and `list` are taken as subcommands, so a plugin cannot be named after one of them.
 
-Plugins run inside the ncm process, so they reach everything ncm reaches: there is no sandbox, and one that calls `Environment.Exit` takes ncm down with it. Installing does not check the entry point either, so a plugin whose shape is wrong only says so when it is called.
+Plugins run inside the pit process, so they reach everything pit reaches: there is no sandbox, and one that calls `Environment.Exit` takes pit down with it. Installing does not check the entry point either, so a plugin whose shape is wrong only says so when it is called.
 
 ### `restore`
 
@@ -175,9 +180,9 @@ With `--lint` the Roslynator code quality rules run over the same compilation af
 
 With `--taint` every method parameter is treated as untrusted and followed to a dangerous api, which is reported as `NC0005` beside the flat `NC0003` hit. The report carries the call chain, so a value that is only handed to `Marshal` after passing through two helpers no longer looks like a plain api usage.
 
-While it works the build draws one line per stage: the stage counter, a braille spinner, a percentage bar and what the stage is on. A restore names packages, the check names files, the advice pass names the assembly it is reading for a missing using, and the build names the assembly, then the composed project and the package targets. A stage whose length cannot be counted, such as the `dotnet build` handoff, draws a run of hashes sliding one cell per frame across the bar and wrapping around to the left edge once it reaches the right one, reporting `??%` instead of a filling bar; the run keeps its width the whole time, so it never reads as a bar filling up. It closes at 100% like any other stage once it finishes. Each repaint is written as a single call wrapped in the terminal's synchronized-output pair, and a repaint that would change nothing is skipped, so the row stays still instead of flickering. Messages printed mid stage clear the line first, so a note never lands under the bar. `--plain` is shared by every tool that draws progress — it is taken out of the command line before the tool or the kernel sees it, so `ncm build --plain`, `ncm runclient --plain` and any other drawing tool answer it the same way. The colour drops when `NO_COLOR` is set or the output is redirected.
+While it works the build draws one line per stage: the stage counter, a braille spinner, a percentage bar and what the stage is on. A restore names packages, the check names files, the advice pass names the assembly it is reading for a missing using, and the build names the assembly, then the composed project and the package targets. A stage whose length cannot be counted, such as the `dotnet build` handoff, draws a run of hashes sliding one cell per frame across the bar and wrapping around to the left edge once it reaches the right one, reporting `??%` instead of a filling bar; the run keeps its width the whole time, so it never reads as a bar filling up. It closes at 100% like any other stage once it finishes. Each repaint is written as a single call wrapped in the terminal's synchronized-output pair, and a repaint that would change nothing is skipped, so the row stays still instead of flickering. Messages printed mid stage clear the line first, so a note never lands under the bar. `--plain` is shared by every tool that draws progress — it is taken out of the command line before the tool or the kernel sees it, so `pit build --plain`, `pit runclient --plain` and any other drawing tool answer it the same way. The colour drops when `NO_COLOR` is set or the output is redirected.
 
-The build targets a package ships are run by the msbuild engine bundled with ncm, together with the .NET sdk props and targets it needs, so a machine without a dotnet sdk still runs them. The copy comes from the sdk that built ncm, which keeps the engine, the built-in tasks and the sdk targets on one version.
+The build targets a package ships are run by the msbuild engine bundled with pit, together with the .NET sdk props and targets it needs, so a machine without a dotnet sdk still runs them. The copy comes from the sdk that built pit, which keeps the engine, the built-in tasks and the sdk targets on one version.
 
 | Parameter | Description |
 |---|---|
@@ -193,15 +198,15 @@ With `--no-manifest` the project is checked as a plain C# project rather than as
 
 ### `clean`
 
-In a project this removes its build cache, `Build`, and leaves the downloads alone: the next build lays it down again. Outside a project the only thing there is to remove is the shared download cache, so ncm says where it is and how big it is and asks first.
+In a project this removes its build cache, `Build`, and leaves the downloads alone: the next build lays it down again. Outside a project the only thing there is to remove is the shared download cache, so pit says where it is and how big it is and asks first.
 
-Everything ncm keeps for itself lives under the user directory — `%LOCALAPPDATA%\NacreCraft\ncm` on Windows, `~/.local/share/NacreCraft/ncm` on Linux, `~/Library/Application Support/NacreCraft/ncm` on macOS — where `Client/`, `Shared/`, `ClientRuntime/`, `Server/`, `Runtime/`, `Template/`, `packages/` and `Update/` are the caches ncm can lay down again, and `Tool/` holds the plugins you installed. Updating or reinstalling ncm leaves all of it alone, and every project on the machine reuses the same copy. `NCM_CACHE_ROOT` points all of it somewhere else, which a test run or a shared machine may want.
+Everything pit keeps for itself lives under the user directory — `%LOCALAPPDATA%\NacreCraft\pit` on Windows, `~/.local/share/NacreCraft/pit` on Linux, `~/Library/Application Support/NacreCraft/pit` on macOS — where `Client/`, `Shared/`, `ClientRuntime/`, `Server/`, `Runtime/`, `Template/`, `packages/` and `Update/` are the caches pit can lay down again, and `Tool/` holds the plugins you installed. Updating or reinstalling pit leaves all of it alone, and every project on the machine reuses the same copy. `PIT_CACHE_ROOT` points all of it somewhere else, which a test run or a shared machine may want.
 
 A release is split into three bundles: `Shared/` holds the files the client and the server carry byte for byte, `ClientRuntime/` and `Server/` hold only what differs, and `Runtime/` is the merged folder a launch reads — the shared files first, the side's own linked over them.
 
 | Parameter | Description |
 |---|---|
-| `[target ...]` | Remove the named caches: `client`, `assets`, `shared`, `server`, `clientruntime`, `runtime`, `template`, `packages`, `update`. The `server` target is the cache ncm downloads into, never a local kernel folder given to `<Sources Directory>`, which is the project's own copy. Several may be named, and nothing is asked since it was asked for. Works in and outside a project |
+| `[target ...]` | Remove the named caches: `client`, `assets`, `shared`, `server`, `clientruntime`, `runtime`, `template`, `packages`, `update`. The `server` target is the cache pit downloads into, never a local kernel folder given to `<Sources Directory>`, which is the project's own copy. Several may be named, and nothing is asked since it was asked for. Works in and outside a project |
 | `--all` | Remove every cache without asking: the client jar, the asset objects, the shared and per-side runtimes, the template files, the packages and the update package. Installed plugins are not cache and are kept, and in a project the build cache goes as well |
 
 ### `runserver`
@@ -257,10 +262,10 @@ A resource name may be shortened to a unique trailing part. Extraction without `
 `-rr` takes a resource back out, matched by full name or a unique trailing part. Every name is resolved before the file is rewritten, so a name that matches nothing leaves the assembly untouched. Removing works the same way as embedding and also drops a strong name signature.
 
 ```
-ncm asm Build/kernel/NacreCraft.Game.dll -res NacreCraftGame.World.Level.Block.blocks.txt -o blocks.txt
-ncm asm Build/kernel/NacreCraft.Game.dll -res blocks.txt      # same resource, into the current directory
-ncm asm Build/out/MyMod.dll -ar Build/packages/MyLib.dll    # embed a dependency into a built mod
-ncm asm Build/out/MyMod.dll -rr MyLib.dll                   # drop it again
+pit asm Build/kernel/NacreCraft.Game.dll -res NacreCraftGame.World.Level.Block.blocks.txt -o blocks.txt
+pit asm Build/kernel/NacreCraft.Game.dll -res blocks.txt      # same resource, into the current directory
+pit asm Build/out/MyMod.dll -ar Build/packages/MyLib.dll    # embed a dependency into a built mod
+pit asm Build/out/MyMod.dll -rr MyLib.dll                   # drop it again
 ```
 
 ### `callgraph`
@@ -284,9 +289,9 @@ An entry is a method with no incoming call, `Main` first. Private and file-local
 The cycle section lists the calls that have no exit and whose condition never flips. `build` reports the same set as `NC0004`, so a clean `callgraph` and a passing check agree. A walk is capped at 256 levels and 20000 nodes, which keeps a very wide graph bounded.
 
 ```powershell
-ncm callgraph --no-external
-ncm callgraph -r MyMod.Entry.OnLoad --depth 3
-ncm callgraph -o callgraph.txt
+pit callgraph --no-external
+pit callgraph -r MyMod.Entry.OnLoad --depth 3
+pit callgraph -o callgraph.txt
 ```
 
 ### `flow`
@@ -305,12 +310,12 @@ Show the execution order of a class as a tree, without reading the C#. Each meth
 | `--no-color` | Disable ANSI colours in the console |
 | `-o`, `--output <file>` | Write the outline to a file instead of the console |
 
-Without `--class` the command lists the classes and their method signatures; naming a class expands its method bodies. A path ending in `.cs` is taken as a file, so `ncm flow Main/Site/AccountAdminEndpoints.cs` and `ncm flow AccountAdminEndpoints` both work. Steps use the same tree branches as the call graph: `├─` when another step follows, `└─` for the last one, and nested blocks carry `│` under their parent.
+Without `--class` the command lists the classes and their method signatures; naming a class expands its method bodies. A path ending in `.cs` is taken as a file, so `pit flow Main/Site/AccountAdminEndpoints.cs` and `pit flow AccountAdminEndpoints` both work. Steps use the same tree branches as the call graph: `├─` when another step follows, `└─` for the last one, and nested blocks carry `│` under their parent.
 
 ```powershell
-ncm flow AccountAdminEndpoints
-ncm flow -f Main/Site/AccountAdminEndpoints.cs
-ncm flow --all -o flow.txt
+pit flow AccountAdminEndpoints
+pit flow -f Main/Site/AccountAdminEndpoints.cs
+pit flow --all -o flow.txt
 ```
 
 ### `taint`
@@ -346,9 +351,9 @@ The usual text escapes are sanitizers by default — `Uri.EscapeDataString`, `We
 Every parameter of a root is seeded by index, so a value handed to the second parameter is not mistaken for the first; `--root-parameter` narrows that to the names given, which is how a call whose other arguments are trusted is checked. A `summary` run follows local calls and stops on a cycle; `none` stays inside the root. Each report entry is the call chain and the sink site, and the same chain at the same position is reported once. A run that never met a sink says `no sink matched`, which is how it differs from a run that met sinks but found no route.
 
 ```powershell
-ncm taint -r MyMod.Entry.OnLoad --sink "System.IO.File.*" --sanitizer "System.Net.WebUtility.HtmlEncode"
-ncm taint --rules taint.json --interprocedural none -o taint.txt
-ncm taint -c MyMod.Net.Handler --no-fields
+pit taint -r MyMod.Entry.OnLoad --sink "System.IO.File.*" --sanitizer "System.Net.WebUtility.HtmlEncode"
+pit taint --rules taint.json --interprocedural none -o taint.txt
+pit taint -c MyMod.Net.Handler --no-fields
 ```
 
 `build --taint` runs the same analysis over every source and reports `NC0005`, and `hook` runs it over each replacement method, since a replacement receives whatever the original received.
@@ -361,7 +366,7 @@ A call through an interface or a virtual method is resolved to what can actually
 
 ### `batch`
 
-Run several tasks in one process. Each task is a complete command line without the `ncm` prefix, and `&` separates them. The project and the global config are loaded once, so repeated checks do not pay the startup cost again while every task still starts from a clean state.
+Run several tasks in one process. Each task is a complete command line without the `pit` prefix, and `&` separates them. The project and the global config are loaded once, so repeated checks do not pay the startup cost again while every task still starts from a clean state.
 
 | Parameter | Description |
 |---|---|
@@ -370,8 +375,8 @@ Run several tasks in one process. Each task is a complete command line without t
 An `&` inside double or single quotes belongs to the argument rather than separating tasks, and `\&` escapes one outside quotes. A task that exits non-zero stops the run with that code; with `--continue-on-error` the remaining tasks still run and the first failure is returned at the end.
 
 ```powershell
-ncm batch 'taint -r MyMod.Entry.OnLoad --sink "System.IO.File.*"&callgraph --no-external'
-ncm batch --continue-on-error 'build --check-only&hook'
+pit batch 'taint -r MyMod.Entry.OnLoad --sink "System.IO.File.*"&callgraph --no-external'
+pit batch --continue-on-error 'build --check-only&hook'
 ```
 
 ### `hook`
@@ -390,11 +395,11 @@ Rules whose `patchMode` is `RuntimeInject` are counted and left alone, since tha
 
 The manifest is read with a reader that keeps line and column on every token, so a report points at the entry that is wrong rather than at the file as a whole: a manifest that is not valid json is reported where it broke (with the usual cause spelled out), and each rule is checked for fields that are not part of the rule table and for values of the wrong kind.
 
-New rules are appended with [`ncm add hook`](#add), and a rule that the loader would refuse for the same key is not written a second time.
+New rules are appended with [`pit add hook`](#add), and a rule that the loader would refuse for the same key is not written a second time.
 
 ```
-ncm hook                        # check the project in the current directory
-ncm hook --project ../OtherMod  # check another one
+pit hook                        # check the project in the current directory
+pit hook --project ../OtherMod  # check another one
 ```
 
 ### `icon`
@@ -407,7 +412,7 @@ Generate a white background mod icon with the mod name.
 
 ### `upgrade`
 
-Convert a csproj based mod project to a `.ncproj` one. What ncm does not understand is listed so it can be handled by hand; the original csproj is renamed to `.bak` unless `--no-backup` is given.
+Convert a csproj based mod project to a `.ncproj` one. What pit does not understand is listed so it can be handled by hand; the original csproj is renamed to `.bak` unless `--no-backup` is given.
 
 | Parameter | Description |
 |---|---|
@@ -416,13 +421,21 @@ Convert a csproj based mod project to a `.ncproj` one. What ncm does not underst
 
 ### `update`
 
-Check nuget.org and update ncm to the latest version. A newer package is downloaded into `Update/` first, then a script there runs `dotnet tool update` against that local copy, so the install itself does not depend on nuget.org being reachable. Takes no parameters.
+Check nuget.org and update pit to the latest version. A newer package is downloaded into `Update/` first, then a script there runs `dotnet tool update` against that local copy, so the install itself does not depend on nuget.org being reachable. Takes no parameters.
+
+### `alias`
+
+Write the `mpit` shortcut into the directory the installed shim lives in, which is already on PATH. The shortcut is a small script that calls `pit` beside it, so updating the tool leaves it working.
+
+| Parameter | Description |
+|---|---|
+| `--remove` | Delete the shortcut instead of writing it |
 
 ## Project config
 
 A mod project can carry a `.ncproj` file next to `ncmod.json`. It holds development-time settings only — how the project is built, run and packaged — and is never embedded into the mod, unlike `ncmod.json`, which the loader reads at runtime.
 
-With a `.ncproj` present ncm compiles the project with Roslyn directly; without one it falls back to `dotnet build`. Tasks declared here run as `ncm <task>`.
+With a `.ncproj` present pit compiles the project with Roslyn directly; without one it falls back to `dotnet build`. Tasks declared here run as `pit <task>`.
 
 Everything the build needs at build time lives under `Build`: `Build/kernel` holds the NC reference assemblies synced from the kernel cache — both the server and the client ones, since a template project carries client code — or from the local kernel directory when `<Sources>` names one, `Build/packages` the packages pulled by the restore, `Build/targets` the props and targets those packages ship, `Build/obj` the intermediate directory the build targets run in, and `Build/out` the build output.
 
@@ -466,10 +479,10 @@ Everything the build needs at build time lives under `Build`: `Build/kernel` hol
   <Exclude Include="legacy/**;third_party/**" />
   <Tasks>
     <Task Name="release" Description="build and pack" Depends="check">
-      <Exec>ncm build</Exec>
+      <Exec>pit build</Exec>
       <Copy From="Build/*.dll" To="dist/" />
       <Zip From="dist" To="dist/$(ModId)-$(ModVersion).zip" />
-      <!-- optional, only for a plugin installed with 'ncm add tool' -->
+      <!-- optional, only for a plugin installed with 'pit add tool' -->
       <Tool Name="MyPlugin" Method="Pack" Args="--out dist" />
     </Task>
   </Tasks>
@@ -479,7 +492,7 @@ Everything the build needs at build time lives under `Build`: `Build/kernel` hol
 | Element | Attributes |
 |---|---|
 | `Check` | `LangVersion` — the C# version used for the api and syntax checks |
-| `Build` | identity and paths: `AssemblyName`, `Configuration`, `Output`, `OutputType` — `Library` (the default) or `Exe`, a plain compilation choice, ncm writes neither an apphost nor a runtimeconfig, `RootNamespace` — used as the default prefix of embedded resource names, `ExtraArgs`, `DependsOnModApi` — whether the mod api is restored as a compile reference and staged next to the mod, `true` by default; set it to `false` for a pure mod that does not use the api, `SharedDependencies` — whether a package assembly the kernel already ships is left out of the mod, `true` by default; a mod that must carry its own copy sets it to `false`. The `NoEmbed` children name assemblies that are never embedded, as complete file names, a semicolon separated list in `Include` |
+| `Build` | identity and paths: `AssemblyName`, `Configuration`, `Output`, `OutputType` — `Library` (the default) or `Exe`, a plain compilation choice, pit writes neither an apphost nor a runtimeconfig, `RootNamespace` — used as the default prefix of embedded resource names, `ExtraArgs`, `DependsOnModApi` — whether the mod api is restored as a compile reference and staged next to the mod, `true` by default; set it to `false` for a pure mod that does not use the api, `SharedDependencies` — whether a package assembly the kernel already ships is left out of the mod, `true` by default; a mod that must carry its own copy sets it to `false`. The `NoEmbed` children name assemblies that are never embedded, as complete file names, a semicolon separated list in `Include` |
 | `Build` | compiler switches, each named after the msbuild property it stands for: `Nullable`, `ImplicitUsings`, `DefineConstants`, `AllowUnsafeBlocks` — `false` by default; a mod that turns it on also has its `unsafe` code measured by the memory safety check, `Optimize` — `true` by default, `CheckForOverflowUnderflow`, `PlatformTarget` — `AnyCPU`, `AnyCPU32BitPreferred`, `x86`, `x64`, `ARM` or `ARM64`, `WarningLevel` — `4` by default, `NoWarn`, `WarningsAsErrors`, `WarningsNotAsErrors` — warning ids, semicolon separated, `TreatWarningsAsErrors`, `Deterministic` — `true` by default, `PathMap` — `from=to` pairs written into the pdb, `Features` — compiler features as `key=value` pairs |
 | `Build` | output switches: `DebugType` — `portable` (the default), `embedded`, `full` or `none`, `DebugSymbols` — `true` by default, `GenerateDocumentationFile`, `DocumentationFile` — where the xml goes, beside the assembly by default, `EmitCompilerGeneratedFiles`, `CompilerGeneratedFilesOutputPath` — where generator output is written, under `Build/obj/generated` by default |
 | `Build` | analyzers: `EnableNETAnalyzers` — `true` by default, runs the `CA` rules the sdk ships, `AnalysisLevel` — `latest` by default, an optional mode may follow a dash as in `latest-all` or `10.0-minimum`, `EnforceCodeStyleInBuild` — lets `IDE` rules take part in the build |
@@ -494,13 +507,13 @@ Everything the build needs at build time lives under `Build`: `Build/kernel` hol
 | `AvaloniaResources` | one `Resource` per pattern with `Include`, packed into the `!AvaloniaResources` resource the Avalonia asset loader reads; every `*.axaml` of the project is picked up as well, so only plain assets have to be listed |
 | `EmbeddedResources` | one `Resource` per pattern with `Include` and an optional `LogicalName`; every matched file is embedded into the built assembly. Without `LogicalName` the resource name is the root namespace plus the file path relative to the project root, slashes turned into dots, so files outside the project root need an explicit one |
 | `Deploy` | `To` — semicolon separated directories the built dll is copied into right after a successful build |
-| `Exclude` | `Include` — semicolon separated patterns kept out of everything ncm scans on its own: the compile source list, the api and syntax checks and the axaml pick up. Patterns are relative to the project root, `*` and `?` stay within one segment and `**` crosses directories. A pattern without a wildcard also covers everything under it, one with a wildcard has to match the whole path — see the note below the table. Patterns declared elsewhere, such as `<References>` or `<AvaloniaResources>`, are still honored as written, so an excluded directory can still be referenced on purpose |
+| `Exclude` | `Include` — semicolon separated patterns kept out of everything pit scans on its own: the compile source list, the api and syntax checks and the axaml pick up. Patterns are relative to the project root, `*` and `?` stay within one segment and `**` crosses directories. A pattern without a wildcard also covers everything under it, one with a wildcard has to match the whole path — see the note below the table. Patterns declared elsewhere, such as `<References>` or `<AvaloniaResources>`, are still honored as written, so an excluded directory can still be referenced on purpose |
 | `Tasks` | one `Task` per task with `Name`, `Description`, `Depends` and `Override`, holding `Exec` steps that run a command line, `Copy` steps that take `From` and `To`, `Zip` steps that pack the `From` directory into the `To` file, and `Tool` steps that take `Name`, `Method` and `Args` and call an installed plugin in this process, and `Script` steps that run JavaScript written inline or named through `File`. `$(Configuration)`, `$(ProjectDir)`, `$(ModId)`, `$(ModName)`, `$(ModVersion)` and `$(env:NAME)` are substituted in every attribute |
 | root | `Override` — the default for tasks that do not carry their own; `Bootstrap` — `true` marks a config that aggregates other projects instead of holding sources |
 
 ### Directory props
 
-A `Directory.NcProject.yml` applies to every project at or below its directory, the ncproj counterpart of `Directory.Build.props`. ncm walks upward from the project directory and applies the files from the outermost one down, so a nearer file wins a setting an outer one also writes. A setting the project writes in its own `<Build>` or `<Check>` still wins over every file.
+A `Directory.NcProject.yml` applies to every project at or below its directory, the ncproj counterpart of `Directory.Build.props`. pit walks upward from the project directory and applies the files from the outermost one down, so a nearer file wins a setting an outer one also writes. A setting the project writes in its own `<Build>` or `<Check>` still wins over every file.
 
 ```yaml
 check:
@@ -526,7 +539,7 @@ Every key under `build` names the same msbuild property as its `.ncproj` attribu
 
 A workspace may hold several unrelated mods. Point the workspace at one `.ncproj` with `Bootstrap="true"`; it carries no sources and needs no `ncmod.json`, and the projects it references with the usual `<References><Project .../></References>` become its workspace.
 
-- `ncm` lists their tasks as `<config>/<task>`, where `<config>` is the config file name without `.ncproj`, and runs them in the owning project. A task declared on the bootstrap itself keeps its plain name.
+- `pit` lists their tasks as `<config>/<task>`, where `<config>` is the config file name without `.ncproj`, and runs them in the owning project. A task declared on the bootstrap itself keeps its plain name.
 - The language server loads the referenced projects through the same config; see [Editor support](#editor-support).
 - A bootstrap cannot reference another bootstrap, and the error names both files.
 
@@ -553,7 +566,7 @@ A pattern is relative to the project root and is matched against whole paths. Wi
 
 ## JavaScript tasks
 
-A task can run JavaScript with a `<Script>` step instead of a shell command. The script runs in the ncm process, with the project config and the shared ncm helpers exposed as objects. A task chain works the same way as with any other step:
+A task can run JavaScript with a `<Script>` step instead of a shell command. The script runs in the pit process, with the project config and the shared pit helpers exposed as objects. A task chain works the same way as with any other step:
 
 ```xml
 <Tasks>
@@ -565,7 +578,7 @@ A task can run JavaScript with a `<Script>` step instead of a shell command. The
   </Task>
 
   <Task Name="build" Description="compile the mod">
-    <Exec>ncm build</Exec>
+    <Exec>pit build</Exec>
   </Task>
 </Tasks>
 ```
@@ -591,7 +604,7 @@ The api surface:
 - `syntax.query(kind)` — every syntax node of that Roslyn kind, each with `kind`, `file`, `line`, `column`, `name` and `text`.
 - `syntax.walk(kind, callback)` — visit the matching nodes one at a time instead of building the whole list in the script.
 
-Scripts are interpreted by Jint, so a tight loop is slow; keep heavy analysis in ncm and use the script for rules and orchestration. A script is limited to 30 seconds, ten million statements, 256 MB of memory and a recursion depth of 128. A syntax error or an exception reports its file, line and column.
+Scripts are interpreted by Jint, so a tight loop is slow; keep heavy analysis in pit and use the script for rules and orchestration. A script is limited to 30 seconds, ten million statements, 256 MB of memory and a recursion depth of 128. A syntax error or an exception reports its file, line and column.
 
 CLR access is off by default. Add `AllowClr="true"` to `<Tasks>` when a script needs the full CLR:
 
@@ -609,17 +622,17 @@ With `AllowClr` on, the `fs` restriction no longer applies: the script can reach
 
 ## Global config
 
-One config can serve every project on the machine: `Config.ncproj` sits beside the `Server/`, `Client/` and `Update/` caches — `%LOCALAPPDATA%\NacreCraft\ncm` on Windows, `~/.local/share/NacreCraft/ncm` on Linux, `~/Library/Application Support/NacreCraft/ncm` on macOS. ncm writes a commented template there on first use. The file is never required: absent or empty, every command behaves exactly as it did before.
+One config can serve every project on the machine: `Config.ncproj` sits beside the `Server/`, `Client/` and `Update/` caches — `%LOCALAPPDATA%\NacreCraft\pit` on Windows, `~/.local/share/NacreCraft/pit` on Linux, `~/Library/Application Support/NacreCraft/pit` on macOS. pit writes a commented template there on first use. The file is never required: absent or empty, every command behaves exactly as it did before.
 
 It is not a project, and a project is always the more specific of the two. What it declares fills in what a project leaves out:
 
 - The pull rules — `Sources`, `Server`, `Client`, `Template` — fall back field by field, so a project that writes only its own mirror still takes the kernel directory, the index rules and the rest from the machine.
 - Every other element falls back whole: a project without a `<Build>` or a `<Packages>` uses the global one.
-- `Tasks` declared here are global commands. They are listed under `Global tasks` in `ncm help` and run from any directory as `ncm <name>`; their `$(ProjectDir)` is the directory the command was issued from, so a shared task can act on the current project. A project task of the same name wins, and a name that collides with a built-in tool needs `Override="true"` just like a project task does.
+- `Tasks` declared here are global commands. They are listed under `Global tasks` in `pit help` and run from any directory as `pit <name>`; their `$(ProjectDir)` is the directory the command was issued from, so a shared task can act on the current project. A project task of the same name wins, and a name that collides with a built-in tool needs `Override="true"` just like a project task does.
 
 Paths inside the global config resolve against its own directory, so a shared `<Deploy>` or `<References>` has to be absolute. Relative ones that only make sense in a project do not belong there.
 
-`ncm upgrade` reads it as well: what the machine declares is written into the `.ncproj` it generates, so a converted project starts from the same source, mirror and compile options as the rest instead of changing behaviour the day the global file does.
+`pit upgrade` reads it as well: what the machine declares is written into the `.ncproj` it generates, so a converted project starts from the same source, mirror and compile options as the rest instead of changing behaviour the day the global file does.
 
 ```xml
 <ncproj version="1">
@@ -630,7 +643,7 @@ Paths inside the global config resolve against its own directory, so a shared `<
 
   <Tasks>
     <Task Name="check" Description="check every project without building">
-      <Exec>ncm build --check</Exec>
+      <Exec>pit build --check</Exec>
     </Task>
   </Tasks>
 </ncproj>
@@ -653,4 +666,4 @@ The extension settings live in its own `config.json` under the extension storage
 
 Apache-2.0 — see [LICENSE](./LICENSE).
 
-Roslynator rules shipped under `NacreCraft.ModBuild.Tools/Analyzers/` are Apache-2.0; see `LICENSE.txt` and `NOTICE.md` beside them.
+Roslynator rules shipped under `src/NacreCraft.Pit/Analyzers/` are Apache-2.0; see `LICENSE.txt` and `NOTICE.md` beside them.

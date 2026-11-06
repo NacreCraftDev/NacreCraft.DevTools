@@ -1,13 +1,13 @@
 # One-shot installer for the NacreCraft development toolchain.
-# Installs the .NET 10 SDK, the dotnet new project template and the ncm CLI.
+# Installs the .NET 10 SDK, the dotnet new project template and the pit CLI.
 # Idempotent: existing pieces are skipped or updated in place, so reruns are safe.
 # Usage: ./tools/install.ps1
 
 $ErrorActionPreference = "Stop"
 
 $Channel = "10.0"
-$TemplateId = "NacreCraft.ModsProjectType"
-$ToolId = "NacreCraft.ModBuild.Tools"
+$TemplateId = "NacreCraft.ModSDK.Template"
+$ToolId = "NacreCraft.Pit"
 $InstallRoot = Join-Path $env:USERPROFILE ".dotnet"
 $ToolsDir = Join-Path $InstallRoot "tools"
 
@@ -53,7 +53,7 @@ else {
     Write-Host "installed SDK $(& dotnet --version)"
 }
 
-#Tools directory must also be on PATH for ncm to be callable later in this session
+#Tools directory must also be on PATH for pit to be callable later in this session
 $env:PATH = "$ToolsDir;$env:PATH"
 
 Write-Host "==> installing project template"
@@ -67,7 +67,7 @@ finally {
     Pop-Location
 }
 
-Write-Host "==> installing ncm"
+Write-Host "==> installing pit"
 
 $globalTools = Invoke-Dotnet @("tool", "list", "-g")
 if ($globalTools -match $ToolId) {
@@ -79,16 +79,24 @@ else {
 
 Write-Host "==> verifying"
 
-if (Test-Command "ncm") {
-    Write-Host "ncm ok -> $((Get-Command ncm).Source)"
+if (Test-Command "pit") {
+    Write-Host "pit ok -> $((Get-Command pit).Source)"
 }
 else {
-    Write-Host "ncm not on PATH in this session, open a new shell"
+    Write-Host "pit not on PATH in this session, open a new shell"
+}
+
+Write-Host "==> writing the mpit shortcut"
+
+#dotnet tools have no install hook, so the shortcut is written here through the tool itself
+& (Join-Path $ToolsDir "pit.exe") alias
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "mpit was not written, run 'pit alias' later"
 }
 
 Write-Host ""
 Write-Host "done"
 Write-Host ""
-Write-Host "if dotnet or ncm is not found in a new shell, add these to PATH:"
+Write-Host "if dotnet or pit is not found in a new shell, add these to PATH:"
 Write-Host "  $InstallRoot"
 Write-Host "  $ToolsDir"

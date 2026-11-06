@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 
-//The values the creation dialog collects, in the order ncm init takes them
+//The values the creation dialog collects, in the order pit init takes them
 export interface CreateValues {
     name: string;
     id: string;
@@ -16,9 +16,9 @@ export interface CreateValues {
     backup: boolean;
 }
 
-//ProjectCreator runs ncm init with the values the dialog collected
+//ProjectCreator runs pit init with the values the dialog collected
 export class ProjectCreator {
-    //Create returns the created directory, or null when ncm reported a failure
+    //Create returns the created directory, or null when pit reported a failure
     public static async create(
         values: CreateValues
     ): Promise<string | null> {
@@ -43,7 +43,7 @@ export class ProjectCreator {
             values.license,
         ];
 
-        //ncm only reads .ncproj, so the fresh project is converted before it is opened
+        //pit only reads .ncproj, so the fresh project is converted before it is opened
         args.push("--upgrade");
         if (!values.backup) {
             args.push("--no-backup");
@@ -57,10 +57,10 @@ export class ProjectCreator {
         return empty ? root : path.join(root, values.name);
     }
 
-    //Run starts ncm and returns whether it succeeded, keeping its output for the failure case
+    //Run starts pit and returns whether it succeeded, keeping its output for the failure case
     private static run(args: string[], cwd: string): Promise<boolean> {
         return new Promise((resolve) => {
-            const child = spawn("ncm", args, {
+            const child = spawn("pit", args, {
                 cwd,
                 shell: true,
                 windowsHide: true,
@@ -72,7 +72,7 @@ export class ProjectCreator {
 
             child.on("error", (error) => {
                 vscode.window.showErrorMessage(
-                    `NacreCraft: ncm could not be started: ${error.message}`
+                    `NacreCraft: pit could not be started: ${error.message}`
                 );
                 resolve(false);
             });
@@ -84,7 +84,7 @@ export class ProjectCreator {
                 }
 
                 vscode.window.showErrorMessage(
-                    `NacreCraft: ncm could not create the project (${code}). ${output.trim()}`
+                    `NacreCraft: pit could not create the project (${code}). ${output.trim()}`
                 );
                 resolve(false);
             });
